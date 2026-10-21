@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Tool output and local data
+*.synced.srt
+*.review.txt
+*.asr.json
+
+# Media (never commit footage or test clips)
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.avi
+*.webm
+*.wav
+*.mp3
+*.m4a
+
+# Speech models and caches
+*.bin
+*.onnx
+*.pt
+.cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+
+# Local secrets
+.env
