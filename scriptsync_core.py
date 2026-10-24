@@ -33,7 +33,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import zipfile
 import xml.etree.ElementTree as ET
@@ -774,6 +773,31 @@ def _load_whisper(model: str, device: str, progress):
     return m
 
 
+def decode_audio(path: str):
+    """Clip -> mono 16 kHz float32 numpy array, using ffmpeg.
+
+    We do this ourselves instead of letting faster-whisper open the file: its built-in
+    loader goes through PyAV and calls av.open(..., metadata_errors=...), which crashes
+    ("open() got an unexpected keyword argument 'metadata_errors'") when the installed
+    PyAV is older than that faster-whisper expects. A numpy array skips that code entirely.
+    """
+    ff = find_ffmpeg()
+    if not ff:
+        raise SyncError("ffmpeg wasn't found. Re-run the launcher so it can install it "
+                        "(pip install imageio-ffmpeg), or install ffmpeg yourself.")
+    try:
+        import numpy as np
+    except ImportError:
+        raise SyncError("numpy isn't installed. Re-run the launcher to finish setup.")
+    kw = {"creationflags": 0x08000000} if os.name == "nt" else {}   # no console flash on Windows
+    p = subprocess.run([ff, "-v", "error", "-nostdin", "-i", path, "-vn", "-ac", "1", "-ar", "16000",
+                        "-f", "f32le", "-"], capture_output=True, **kw)
+    if p.returncode != 0 or not p.stdout:
+        why = (p.stderr.decode("utf-8", "replace").strip().splitlines() or ["no audio stream?"])[-1]
+        raise SyncError(f"Couldn't read the audio from '{os.path.basename(path)}': {why}")
+    return np.frombuffer(p.stdout, dtype=np.float32)
+
+
 def _auto_device() -> str:
     """Use an NVIDIA GPU when CTranslate2 can see one, otherwise the CPU."""
     try:
@@ -784,15 +808,18 @@ def _auto_device() -> str:
 
 
 def _whisper_transcribe(path, s: Settings, hint: str, progress, cancel):
+    progress(0.01, "Reading the audio")
+    audio = decode_audio(path)
+
     def run(device):
         model = _load_whisper(s.model, device, progress)
         progress(0.10, "Listening to the clip")
         segs, info = model.transcribe(
-            path, language=None if s.language == "auto" else s.language,
+            audio, language=None if s.language == "auto" else s.language,
             word_timestamps=True, beam_size=5, condition_on_previous_text=False,
             initial_prompt=(f"Names and terms: {hint}." if hint else None))
         words = []
-        dur = float(info.duration or 0)
+        dur = len(audio) / 16000.0
         for seg in segs:
             if cancel and cancel.is_set():
                 raise Cancelled()
@@ -847,19 +874,7 @@ def transcribe(path: str, s: Settings, lines: list, progress, cancel):
         words, dur, lang = plugin.transcribe(path, s.language, hint, progress, cancel)
         words = [w if isinstance(w, AsrWord) else AsrWord(*w) for w in words]
     else:
-        try:
-            words, dur, lang = _whisper_transcribe(path, s, hint, progress, cancel)
-        except (Cancelled, SyncError):
-            raise
-        except Exception as e:
-            ff = find_ffmpeg()
-            if ff and not isinstance(e, (MemoryError,)) and "decode" in str(e).lower() + repr(e).lower():
-                tmp = os.path.join(tempfile.mkdtemp(prefix="nss_"), "audio.wav")
-                subprocess.run([ff, "-y", "-i", path, "-vn", "-ac", "1", "-ar", "16000", tmp],
-                               check=True, capture_output=True)
-                words, dur, lang = _whisper_transcribe(tmp, s, hint, progress, cancel)
-            else:
-                raise
+        words, dur, lang = _whisper_transcribe(path, s, hint, progress, cancel)
     try:
         json.dump({"words": [w.__dict__ for w in words], "duration": dur, "language": lang},
                   open(cpath, "w", encoding="utf-8"))

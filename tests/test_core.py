@@ -89,6 +89,33 @@ def test_big_alignment_speed():
     t=time.time(); res = sync_words(parse_script(script, Settings(keep_script_lines=True)), asr, end, Settings()); dt=time.time()-t
     print("big align", len(words), "words", f"{dt:.2f}s"); assert dt < 10
 
+
+
+
+def test_decode_audio_without_pyav():
+    """Regression: faster-whisper's own loader calls av.open(metadata_errors=...), which crashes on older
+    PyAV. decode_audio must work (via ffmpeg) even if PyAV can't be imported at all."""
+    import shutil, subprocess, tempfile
+    ff = find_ffmpeg()
+    if not ff:
+        print("skipped (no ffmpeg)"); return
+    d = tempfile.mkdtemp()
+    wav = os.path.join(d, "tone.wav")
+    subprocess.run([ff, "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-ar", "44100", wav], check=True)
+    saved = sys.modules.get("av")
+    sys.modules["av"] = None            # any `import av` now raises ImportError
+    try:
+        audio = decode_audio(wav)
+    finally:
+        if saved is None: sys.modules.pop("av", None)
+        else: sys.modules["av"] = saved
+    assert audio.dtype.name == "float32" and abs(len(audio) - 32000) < 400, len(audio)
+    try:
+        decode_audio(os.path.join(d, "missing.mp4")); assert False
+    except SyncError as e:
+        assert "Couldn't read the audio" in str(e), e
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
