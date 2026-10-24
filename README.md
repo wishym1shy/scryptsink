@@ -38,22 +38,58 @@ Nothing is dropped silently:
 
 ## Install and run
 
-Needs Python 3.9+ ([python.org](https://www.python.org/downloads/); on Windows tick "Add python.exe to PATH").
+### 1. Install Python (once)
+
+Python 3.9 or newer from [python.org](https://www.python.org/downloads/). On Windows, tick
+**"Add python.exe to PATH"** on the first installer screen.
+
+### 2. Download the whole project
+
+The launcher needs the other files in this repo next to it (`scriptsync_core.py`, `scriptsync_gui.py`
+and `requirements.txt`), so don't download `run_windows.bat` on its own.
+
+1. On the repo page click the green **Code** button, then **Download ZIP**.
+2. Extract the ZIP. On Windows: right-click it, **Extract All**. Don't run the launcher from inside the
+   zip preview, it won't work.
+3. Move the extracted folder somewhere permanent (for example `Documents\scryptsink`). The first launch
+   creates a `.venv` folder inside it, so don't put it somewhere temporary or read-only.
+
+Or, if you use git: `git clone https://github.com/wishym1shy/scryptsink`
+
+You should end up with a folder like this (the launchers must stay beside the `.py` files):
+
+```
+scryptsink/
+  run_windows.bat
+  run_mac.command
+  scriptsync_core.py
+  scriptsync_gui.py
+  requirements.txt
+  ...
+```
+
+### 3. Start it
 
 | System | Start |
 |---|---|
-| Windows | double-click `run_windows.bat` |
-| macOS | double-click `run_mac.command` (first time: right-click, Open) |
+| Windows | open the folder and double-click `run_windows.bat` |
+| macOS | open the folder and double-click `run_mac.command` (first time: right-click, Open) |
 
 The first launch creates a virtual environment and installs `requirements.txt` (a few minutes, needs internet).
-The first sync downloads the speech model once (about 460 MB for the default "Balanced" size).
+After that it opens in seconds. The first sync downloads the speech model once (about 460 MB for the
+default "Balanced" size).
 
-Manual install, if you prefer:
+Windows may show a SmartScreen warning for the `.bat` file because it was downloaded from the internet.
+Choose **More info**, then **Run anyway** if you trust the source (you can read the file first; it is short).
+
+### Manual install (optional)
+
+From inside the project folder:
 
 ```
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt     # Windows: .venv\Scripts\pip
-.venv/bin/python scriptsync_gui.py
+.venv/bin/python scriptsync_gui.py            # Windows: .venv\Scripts\python scriptsync_gui.py
 ```
 
 ## Using the app
