@@ -1,6 +1,6 @@
 # scryptsink
 
-**Script Sync**: give it a clip and the writer's script, get back a timed subtitle file (`.srt`) whose text is
+**ScryptSink** (formerly Script Sync): give it a clip and the writer's script, get back a timed subtitle file (`.srt`) whose text is
 **the script exactly as written** and whose timing comes from the **actual audio**.
 
 No copy-pasting a transcript line by line. No auto-transcript to patch up. No dependence on any one editor:
@@ -15,7 +15,7 @@ When a writer supplies the script and an editor receives pre-cut footage, subtit
 or by generating an auto-transcript and pasting the script into it. Both are slow, and the auto-transcript's
 spelling still has to be fixed.
 
-Script Sync treats it as an alignment problem instead: the speech model only supplies *when* each word was said.
+ScryptSink treats it as an alignment problem instead: the speech model only supplies *when* each word was said.
 The *words* always come from the script.
 
 ## How it works
@@ -155,9 +155,9 @@ automatic cuts.
 To have an AI tool do it, click **Copy AI prompt**, paste it into the AI tool you already use, copy its answer and
 paste that into **Apply line breaks…**.
 
-**Script Sync never calls an AI service itself and has no place for an API key.** Everything it does runs on your
-machine; the AI step, if you want one, happens in your own tool, and Script Sync only reads the text you paste back.
-AI tools sometimes "tidy up" wording, so Script Sync checks that every word and punctuation mark is exactly as in
+**ScryptSink never calls an AI service itself and has no place for an API key.** Everything it does runs on your
+machine; the AI step, if you want one, happens in your own tool, and ScryptSink only reads the text you paste back.
+AI tools sometimes "tidy up" wording, so ScryptSink checks that every word and punctuation mark is exactly as in
 the script and refuses the line breaks otherwise, listing each word that was changed, added or dropped.
 
 ### Word timings for other tools
@@ -178,17 +178,17 @@ More options: `--fps 25` (frame rate to snap to; default `auto` = the clip's own
 prompt for this script and exit) and `--line-breaks recut.txt` (use your own line breaks; checked against the script).
 
 Everything runs locally; clips and scripts never leave your machine. Transcripts are cached in
-`%LOCALAPPDATA%\ScriptSync\cache` (Windows) or `~/.cache/ScriptSync/cache` so re-syncing an edited script is instant.
+`%LOCALAPPDATA%\ScryptSink\cache` (Windows) or `~/.cache/ScryptSink/cache` so re-syncing an edited script is instant.
 An NVIDIA GPU is used automatically when available, otherwise the CPU (a 60 s clip takes very roughly 15-40 s
 on the default model).
 
 ## Troubleshooting
 
-Script Sync keeps a log of what it does (app version, settings used, how long each step took, which device the
+ScryptSink keeps a log of what it does (app version, settings used, how long each step took, which device the
 speech model ran on, and the full details of any error). It stays on your computer:
 
-- Windows: `%LOCALAPPDATA%\ScriptSync\logs\scriptsync.log`
-- macOS / Linux: `~/.cache/ScriptSync/logs/scriptsync.log`
+- Windows: `%LOCALAPPDATA%\ScryptSink\logs\scryptsink.log`
+- macOS / Linux: `~/.cache/ScryptSink/logs/scryptsink.log`
 
 It is capped at about 5 MB (older entries are dropped). In the app: **More options > Troubleshooting**:
 **Open log folder**, or **Copy diagnostic info** to put the version, system details and the end of the log on the
