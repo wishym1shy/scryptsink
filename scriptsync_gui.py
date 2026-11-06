@@ -31,6 +31,10 @@ LANGS = {
     "Tagalog / Filipino": "tl",
     "Spanish": "es",
 }
+FRAME_RATES = {
+    "Don't snap": 0.0, "23.976": 24000 / 1001, "24": 24.0, "25": 25.0, "29.97": 30000 / 1001,
+    "30": 30.0, "50": 50.0, "59.94": 60000 / 1001, "60": 60.0,
+}
 ACCENT = "#d9822b"
 BG = "#f6f5f2"
 TAGS = {"ok": "#e6f4ea", "check": "#fff3d1", "bad": "#fbdada"}
@@ -238,6 +242,7 @@ class App(tk.Tk):
         self.v_mincue = tk.DoubleVar(value=0.8)
         self.v_bridge = tk.DoubleVar(value=0.4)
         self.v_maxsec = tk.DoubleVar(value=5.0)
+        self.v_fps = tk.StringVar(value="30")
         opts = [
             (self.v_brackets, "Ignore [bracketed notes] in the script"),
             (self.v_labels, "Script has speaker labels like  'Sam:'  (remove them)"),
@@ -258,6 +263,9 @@ class App(tk.Tk):
             ttk.Label(nums, text=lbl).pack(side="left")
             ttk.Spinbox(nums, from_=lo, to=hi, increment=inc, textvariable=var, width=5).pack(
                 side="left", padx=(6, 20))
+        ttk.Label(nums, text="Snap to frame rate").pack(side="left")
+        ttk.Combobox(nums, textvariable=self.v_fps, values=list(FRAME_RATES), state="readonly",
+                     width=10).pack(side="left", padx=(6, 0))
 
         # ---- run
         rf = ttk.Frame(self, padding=(16, 8, 16, 2))
@@ -443,6 +451,7 @@ class App(tk.Tk):
             max_cue_seconds=num(self.v_maxsec, 5.0),
             min_cue_seconds=num(self.v_mincue, 0.8),
             bridge_gap=num(self.v_bridge, 0.4),
+            fps=FRAME_RATES.get(self.v_fps.get(), 30.0),
             ignore_brackets=self.v_brackets.get(),
             strip_speaker_labels=self.v_labels.get(),
             keep_script_lines=self.v_lines.get(),
@@ -457,7 +466,7 @@ class App(tk.Tk):
                 "out": self.var_out.get(), "brackets": self.v_brackets.get(), "labels": self.v_labels.get(),
                 "lines": self.v_lines.get(), "zero": self.v_zero.get(), "prime": self.v_prime.get(),
                 "unheard": self.v_unheard.get(), "cache": self.v_cache.get(),
-                "mincue": self.v_mincue.get(), "bridge": self.v_bridge.get(), "maxsec": self.v_maxsec.get()}
+                "mincue": self.v_mincue.get(), "bridge": self.v_bridge.get(), "maxsec": self.v_maxsec.get(), "fps": self.v_fps.get()}
         try:
             json.dump(data, open(settings_path(), "w"))
         except Exception:
@@ -480,6 +489,8 @@ class App(tk.Tk):
                          ("cache", self.v_cache)):
                 if k in d:
                     v.set(bool(d[k]))
+            if d.get("fps") in FRAME_RATES:
+                self.v_fps.set(d["fps"])
             for k, v in (("mincue", self.v_mincue), ("bridge", self.v_bridge), ("maxsec", self.v_maxsec)):
                 if k in d:
                     v.set(float(d[k]))

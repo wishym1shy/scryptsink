@@ -120,7 +120,8 @@ which helps when footage was re-cut after the SRT was made.
 - **Language** - auto-detect, English, Tagalog/Filipino, Spanish.
 - **Max characters per subtitle** - default 40; set it to match your caption style.
 - **More options** - ignore `[bracketed notes]`, strip `Name:` speaker labels, keep or re-flow the writer's line
-  breaks, shortest/longest subtitle, hold subtitles through short pauses, include never-heard lines, and a Premiere
+  breaks, shortest/longest subtitle, hold subtitles through short pauses, include never-heard lines, snap to your
+  project's frame rate (default 30; subtitles in continuous speech always touch, so they never blink), and a Premiere
   fix (Premiere can drop a first cue that starts at exactly `00:00:00,000`, so it starts at `00:00:00,067`).
 
 Styling (font, size, position, colours) is done in your editor; the SRT carries text and timing only.
