@@ -255,6 +255,65 @@ def test_llm_prompt_has_rules_and_script():
     assert "Do NOT change" in p
 
 
+def test_clip_frame_rate():
+    """Each clip's subtitles snap to that clip's own frame rate; audio-only clips use the default."""
+    import subprocess, tempfile
+    ff = find_ffmpeg()
+    if not ff:
+        print("skipped (no ffmpeg)"); return
+    d = tempfile.mkdtemp()
+    clips = {}
+    for name, rate in (("a.mp4", "25"), ("b.mp4", "30000/1001"), ("c.mp4", "24000/1001")):
+        clips[name] = os.path.join(d, name)
+        subprocess.run([ff, "-v", "error", "-f", "lavfi", "-i", f"color=c=black:s=32x32:d=1:r={rate}",
+                        "-c:v", "mpeg4", clips[name]], check=True)
+    wav = os.path.join(d, "voice.wav")
+    subprocess.run([ff, "-v", "error", "-f", "lavfi", "-i", "sine=duration=1", wav], check=True)
+    assert detect_fps(clips["a.mp4"]) == 25.0
+    assert detect_fps(clips["b.mp4"]) == 30000 / 1001
+    assert detect_fps(clips["c.mp4"]) == 24000 / 1001
+    assert detect_fps(wav) is None and detect_fps(os.path.join(d, "missing.mp4")) is None
+    s = Settings(fps=30.0)
+    assert clip_fps(Job(clips["a.mp4"]), s) == (25.0, "read from the clip")
+    assert clip_fps(Job(wav), s) == (30.0, "clip has no video; default used")
+    assert clip_fps(Job(clips["a.mp4"], fps=50.0), s) == (50.0, "set for this clip")
+    assert clip_fps(Job(clips["a.mp4"], fps=0.0), s)[0] == 0.0
+    assert clip_fps(Job(clips["a.mp4"]), Settings(fps=24.0, match_clip_fps=False))[0] == 24.0
+    assert fps_name(30000 / 1001) == "29.97 fps" and fps_name(0) == "not snapped"
+
+
+def test_run_job_snaps_to_the_clips_frame_rate():
+    import subprocess, tempfile
+    ff = find_ffmpeg()
+    if not ff:
+        print("skipped (no ffmpeg)"); return
+    d = tempfile.mkdtemp()
+    clip = os.path.join(d, "clip.mp4")
+    subprocess.run([ff, "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=32x32:d=4:r=25",
+                    "-c:v", "mpeg4", clip], check=True)
+    plugin = os.path.join(d, "plugin.py")
+    open(plugin, "w").write(
+        "def transcribe(path, language, hint, progress, cancel):\n"
+        "    words, t = [], 0.513\n"
+        "    for w in 'one two three four five six seven eight'.split():\n"
+        "        words.append((w, t, t + 0.31, 0.9)); t += 0.377\n"
+        "    return words, t + 0.5, 'en'\n")
+    old_env = {k: os.environ.get(k) for k in ("SCRIPTSYNC_ASR_PLUGIN", "LOCALAPPDATA")}
+    os.environ["SCRIPTSYNC_ASR_PLUGIN"] = plugin
+    os.environ["LOCALAPPDATA"] = d
+    try:
+        res = run_job(Job(clip, script_text="one two three four\nfive six seven eight"),
+                      Settings(premiere_zero_fix=False))
+        assert res.fps == 25.0 and "read from the clip" in res.report_text and "25 fps" in res.report_text
+        for c in res.cues:
+            for t in (c.start, c.end):
+                assert abs(t * 25 - round(t * 25)) < 1e-6, t
+    finally:
+        for k, v in old_env.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+
+
 def test_output_names():
     """Every sync gets a new name: clip + synced + max chars + max words + fps + date/time."""
     import tempfile
