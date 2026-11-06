@@ -73,19 +73,44 @@ class PasteDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(title)
         self.transient(parent)
+        self.configure(bg=BG)
         self.result = None
-        self.geometry("620x440")
-        ttk.Label(self, text="Paste the writer's script here (one subtitle line per line).",
-                  padding=(12, 10, 12, 4)).pack(anchor="w")
-        self.text = tk.Text(self, wrap="word", font=("Segoe UI", 11), undo=True)
-        self.text.pack(fill="both", expand=True, padx=12)
-        self.text.insert("1.0", initial)
+        # Pack order matters: tkinter hands out space in the order widgets are packed. The buttons
+        # go in first (docked to the bottom) so the text box can only take what is left, and the
+        # buttons can never be pushed off-screen (they used to be, until the window was enlarged).
         bar = ttk.Frame(self, padding=12)
-        bar.pack(fill="x")
+        bar.pack(side="bottom", fill="x")
         ttk.Button(bar, text="Use this script", style="Accent.TButton", command=self.ok).pack(side="right")
         ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="right", padx=8)
+        ttk.Label(bar, text="Ctrl+Enter = use this script", style="Sub.TLabel").pack(side="left")
+        ttk.Label(self, text="Paste the writer's script here (one subtitle line per line).",
+                  padding=(12, 10, 12, 4)).pack(side="top", anchor="w")
+        tf = ttk.Frame(self)
+        tf.pack(side="top", fill="both", expand=True, padx=12)
+        # Small requested size: the window size decides the real size, the text box just fills it.
+        self.text = tk.Text(tf, wrap="word", font=("Segoe UI", 11), undo=True, width=40, height=8)
+        sb = ttk.Scrollbar(tf, orient="vertical", command=self.text.yview)
+        self.text.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.text.pack(side="left", fill="both", expand=True)
+        self.text.insert("1.0", initial)
+        self.bind("<Control-Return>", lambda e: self.ok())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self._place(parent)
         self.text.focus_set()
         self.grab_set()
+
+    def _place(self, parent):
+        """Size the window for the screen's scaling (fonts grow on high-DPI displays) and centre it
+        over the main window, never larger than the screen."""
+        self.update_idletasks()
+        px = float(self.tk.call("tk", "scaling")) / (96 / 72)      # 1.0 at 100% display scaling
+        w = min(int(640 * px), self.winfo_screenwidth() - 40)
+        h = min(int(460 * px), self.winfo_screenheight() - 80)
+        self.minsize(min(int(420 * px), w), min(int(260 * px), h))
+        x = parent.winfo_rootx() + max((parent.winfo_width() - w) // 2, 0)
+        y = parent.winfo_rooty() + max((parent.winfo_height() - h) // 3, 0)
+        self.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
 
     def ok(self):
         self.result = self.text.get("1.0", "end").strip()
