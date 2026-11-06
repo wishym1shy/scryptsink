@@ -64,6 +64,7 @@ class Settings:
     model: str = "small"
     language: str = "auto"          # "auto" or a Whisper language code (en, tl, es ...)
     device: str = "auto"            # auto / cpu / cuda
+    model_dir: str = ""             # where speech models are downloaded/kept ("" = the usual shared cache)
     prime_vocab: bool = True        # hint names/brands from the script to the model
     use_cache: bool = True          # reuse a clip's transcript if nothing changed
     # script reading
@@ -770,11 +771,35 @@ def vocab_hint(lines: list, limit: int = 40) -> str:
     return ", ".join(out)
 
 
+def default_model_dir() -> str:
+    """Where speech models go when no folder is chosen (the Hugging Face cache faster-whisper uses)."""
+    if os.environ.get("HF_HUB_CACHE"):
+        return os.environ["HF_HUB_CACHE"]
+    home = os.environ.get("HF_HOME") or os.path.join(
+        os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache"), "huggingface")
+    return os.path.join(home, "hub")
+
+
+def check_model_dir(path: str) -> str:
+    """Make sure a chosen model folder exists and can be written to. Returns the absolute path."""
+    path = os.path.abspath(os.path.expanduser(path.strip()))
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".scriptsync_write_test")
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+    except OSError as e:
+        raise SyncError(f"Can't use '{path}' for the speech models: {e.strerror or e}. "
+                        "Choose another folder in More options, or clear it to use the default.")
+    return path
+
+
 _model_cache: dict = {}
 
 
-def _load_whisper(model: str, device: str, progress):
-    key = (model, device)
+def _load_whisper(model: str, device: str, progress, model_dir: str = ""):
+    key = (model, device, model_dir)
     if key in _model_cache:
         return _model_cache[key]
     try:
@@ -782,9 +807,11 @@ def _load_whisper(model: str, device: str, progress):
     except ImportError:
         raise SyncError("The speech engine (faster-whisper) isn't installed. "
                         "Run the launcher again or: pip install faster-whisper")
-    progress(0.02, f"Loading speech model '{model}' (first time downloads it - this can take a few minutes)")
+    where = model_dir or default_model_dir()
+    progress(0.02, f"Loading speech model '{model}' from {where} "
+                   "(first time downloads it - this can take a few minutes)")
     ctype = "int8" if device == "cpu" else "float16"
-    m = WhisperModel(model, device=device, compute_type=ctype)
+    m = WhisperModel(model, device=device, compute_type=ctype, download_root=model_dir or None)
     _model_cache[key] = m
     return m
 
@@ -827,8 +854,10 @@ def _whisper_transcribe(path, s: Settings, hint: str, progress, cancel):
     progress(0.01, "Reading the audio")
     audio = decode_audio(path)
 
+    model_dir = check_model_dir(s.model_dir) if s.model_dir.strip() else ""
+
     def run(device):
-        model = _load_whisper(s.model, device, progress)
+        model = _load_whisper(s.model, device, progress, model_dir)
         progress(0.10, "Listening to the clip")
         segs, info = model.transcribe(
             audio, language=None if s.language == "auto" else s.language,
@@ -855,7 +884,7 @@ def _whisper_transcribe(path, s: Settings, hint: str, progress, cancel):
         if dev == "cpu":
             raise
         # GPU libraries missing/unusable -> retry on CPU
-        _model_cache.pop((s.model, dev), None)
+        _model_cache.pop((s.model, dev, model_dir), None)
         progress(0.05, f"GPU not usable ({type(e).__name__}); using CPU")
         return run("cpu")
 
@@ -1015,10 +1044,13 @@ def main(argv=None):
     ap.add_argument("--max-chars", type=int, default=40)
     ap.add_argument("--fps", type=float, default=30.0,
                     help="snap subtitle times to whole frames at this frame rate (0 = don't snap)")
+    ap.add_argument("--model-dir", default=os.environ.get("SCRIPTSYNC_MODEL_DIR", ""),
+                    help="folder for the speech model files (default: the shared Hugging Face cache, "
+                         "or $SCRIPTSYNC_MODEL_DIR)")
     ap.add_argument("--no-cache", action="store_true")
     a = ap.parse_args(argv)
     s = Settings(model=a.model, language=a.language, max_chars=a.max_chars, use_cache=not a.no_cache,
-                 fps=a.fps)
+                 fps=a.fps, model_dir=a.model_dir)
 
     def prog(f, m):
         print(f"[{int(f * 100):3d}%] {m}", file=sys.stderr)
