@@ -27,7 +27,10 @@ The *words* always come from the script.
    (`$25,000` matches "twenty five thousand dollars").
 3. **Time** - each script word takes the timestamp of the spoken word it matched. Words never heard are
    interpolated and flagged.
-4. **Cue** - the script's own line breaks become subtitle cues, split further at pauses/punctuation when too long.
+4. **Cue** - the script's own line breaks become subtitle cues. Lines that are too long are cut where a speaker
+   would breathe: after a sentence (two sentences never share a cue if it can be avoided), then after a comma or
+   other clause punctuation, then at real pauses in the audio. Words that belong together ("the car",
+   "in the morning", "will be", "25 percent", names) are kept together, and one-word cues are avoided.
 5. **Flag** - every cue is graded **OK / CHECK / BAD**, and a review sheet lists what to look at.
 
 Nothing is dropped silently:
@@ -124,7 +127,8 @@ which helps when footage was re-cut after the SRT was made.
 
 - **Listening quality** - base / small (default) / medium / large-v3-turbo. Use a bigger one for noisy audio.
 - **Language** - auto-detect, English, Tagalog/Filipino, Spanish.
-- **Max characters per subtitle** - default 40; set it to match your caption style.
+- **Max characters** per subtitle - default 40; set it to match your caption style.
+- **Max words** per subtitle - 0 = no limit. Short-form video often looks best with 2-4.
 - **More options** - ignore `[bracketed notes]`, strip `Name:` speaker labels, keep or re-flow the writer's line
   breaks, shortest/longest subtitle, hold subtitles through short pauses, include never-heard lines, snap to your
   project's frame rate (default 30; subtitles in continuous speech always touch, so they never blink), and a Premiere
@@ -132,11 +136,37 @@ which helps when footage was re-cut after the SRT was made.
 
 Styling (font, size, position, colours) is done in your editor; the SRT carries text and timing only.
 
+### Your own line breaks (by hand or with an AI tool)
+
+Prefer to decide the breaks yourself? After a sync, select the clip and click **Apply line breaks…**. The window
+opens with the current subtitles, one per line: move the line breaks, press **Use this script**, and the clip is
+re-timed straight away from its saved transcript (no new listening pass). Leave the window empty to go back to
+automatic cuts.
+
+To have an AI tool do it, click **Copy AI prompt**, paste it into the AI tool you already use, copy its answer and
+paste that into **Apply line breaks…**.
+
+**Script Sync never calls an AI service itself and has no place for an API key.** Everything it does runs on your
+machine; the AI step, if you want one, happens in your own tool, and Script Sync only reads the text you paste back.
+AI tools sometimes "tidy up" wording, so Script Sync checks that every word and punctuation mark is exactly as in
+the script and refuses the line breaks otherwise, listing each word that was changed, added or dropped.
+
+### Word timings for other tools
+
+Tick **More options > Also save every word's timing** to also get:
+
+- `clipname.words.json` - every script word with `word`, `start`, `end` (seconds), `confidence`, `heard`,
+  `heard_as` and `line`;
+- `clipname.words.srt` - one word per subtitle.
+
 ## Command line
 
 ```
 python scriptsync_core.py clip.mp4 script.docx -o out_folder --model small --max-chars 40
 ```
+
+More options: `--max-words 4`, `--words` (also write the word-timing files), `--print-prompt` (print the AI-tool
+prompt for this script and exit) and `--line-breaks recut.txt` (use your own line breaks; checked against the script).
 
 Everything runs locally; clips and scripts never leave your machine. Transcripts are cached in
 `%LOCALAPPDATA%\ScriptSync\cache` (Windows) or `~/.cache/ScriptSync/cache` so re-syncing an edited script is instant.
@@ -147,7 +177,8 @@ on the default model).
 
 - Numbers said differently from how they're written ("2025" vs "twenty twenty five") show up as CHECK.
 - Overlapping speakers are flagged rather than separated; there is no per-speaker colouring.
-- The cue-splitting defaults are guesses; tune them for your style.
+- Cue cutting is rule-based: it can't tell an adjective from a noun, so it may still split something like
+  "last | year" when a line has to be cut and there is no better place. Fix those with **Apply line breaks…**.
 - Not yet tested across many accents, noisy footage or long-form content.
 
 ## Development
@@ -155,6 +186,7 @@ on the default model).
 ```
 python tests/test_core.py     # unit tests; no model or audio needed
 python tests/stress.py        # simulated speech-model errors vs ground-truth timing
+python tests/cuts.py          # cue-cut quality on sample scripts (sentence joins, split phrases, lone words)
 ```
 
 The engine (`scriptsync_core.py`) uses only the standard library for matching and cue building, so it can be

@@ -51,7 +51,10 @@ exactly as written, with timing taken from the audio. Desktop GUI (tkinter) plus
 2. Align script tokens to spoken tokens: exact-match anchors first, then Needleman-Wunsch in the gaps.
    Numbers are spoken out ("$25,000" -> twenty five thousand dollars) on both sides before matching.
 3. Each script word inherits the time of the spoken word it matched. Unheard words are interpolated and flagged.
-4. The script's own line breaks become cues; long lines are split at pauses/punctuation.
+4. The script's own line breaks become cues; long lines are cut where a speaker would breathe (sentence end,
+   clause punctuation, audio pause, never between words that belong together). `tests/cuts.py` measures this.
+   Users can also supply their own line breaks (by hand or from an outside AI tool); they're checked word-for-word
+   against the script. The app never calls an AI service or stores an API key.
 5. Confidence per cue -> OK / CHECK / BAD, written to a review file.
 
 Design rules that should not regress:
@@ -66,9 +69,10 @@ Design rules that should not regress:
 ```
 python tests/test_core.py     # unit tests, no model or audio needed
 python tests/stress.py        # simulated speech-model errors vs ground-truth timing
+python tests/cuts.py          # cue-cut quality (lower is better)
 ```
 
-Before opening a PR, run both. Currently the stress test reports a median word-timing error of
+Before opening a PR, run all three. Currently the stress test reports a median word-timing error of
 about 30 ms and well under 1% of words more than 1 s off; a change that makes this noticeably worse
 needs a reason in the PR description.
 
