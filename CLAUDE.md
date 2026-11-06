@@ -88,6 +88,13 @@ SCRIPTSYNC_ASR_PLUGIN=tests/fake_plugin.py xvfb-run -a python tests/gui_smoke.py
 
 ## Workflow
 
-- Branch from `main`, one focused change per PR, descriptive PR title and body (what, why, how tested).
+- One focused change per PR, descriptive PR title and body (what, why, how tested).
+- **Every new branch is created from the latest `main`, and every PR targets `main`.** Fetch first
+  (`git fetch origin main && git checkout -b <branch> origin/main`). Never branch from another feature
+  branch and never open a PR whose base is anything other than `main`. No stacked PRs: a PR merged into a
+  non-`main` base never reaches `main` (this happened with #10 and #11).
+- If two open PRs touch the same lines, keep them independent anyway. After the owner merges one, update
+  the other branch by merging `origin/main` into it (not rebasing, which would need a force-push) and fix
+  any conflicts there, so the owner never has to.
 - Do not add a dependency without saying why in the PR.
 - Never leave test media or generated `.srt` files in the tree (`.gitignore` covers them).
