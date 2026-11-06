@@ -107,9 +107,14 @@ python -m venv .venv
    (`clip.mp4` + `clip.docx` / `.txt` / `.md` / `.srt`) is paired automatically; otherwise select the row and
    **Choose script file** or **Paste script**.
 2. Press **Sync**.
-3. Next to each clip (or in the folder you pick) you get:
-   - `clipname.synced.srt`
-   - `clipname.review.txt`
+3. Next to each clip (or in the folder you pick) you get a subtitle file and its review sheet, named after the
+   clip and the settings used, plus the date and time of the sync:
+   - `clipname_synced_40ch_0w_30fps_2026-11-06_14-32-05.srt`
+   - `clipname_synced_40ch_0w_30fps_2026-11-06_14-32-05.review.txt`
+
+   `40ch` = max characters per subtitle, `0w` = max words (0 = no limit), `30fps` = the frame rate the times
+   were snapped to (`nosnap` = off). Every sync makes new files, so earlier versions are never overwritten:
+   sync again with different settings and compare.
 4. The Review panel colours each subtitle: green OK, amber CHECK, red BAD, with a note on what to look at.
 
 An existing `.srt` also works as the script: only its text is used and the timing is redone from the footage,
@@ -159,9 +164,9 @@ the script and refuses the line breaks otherwise, listing each word that was cha
 
 Tick **More options > Also save every word's timing** to also get:
 
-- `clipname.words.json` - every script word with `word`, `start`, `end` (seconds), `confidence`, `heard`,
+- `<same name as the .srt>.words.json` - every script word with `word`, `start`, `end` (seconds), `confidence`, `heard`,
   `heard_as` and `line`;
-- `clipname.words.srt` - one word per subtitle.
+- `<same name as the .srt>.words.srt` - one word per subtitle.
 
 ## Command line
 
