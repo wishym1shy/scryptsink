@@ -1316,6 +1316,28 @@ def find_script_for(video: str) -> Optional[str]:
     return os.path.join(d, cands[0][2])
 
 
+def previous_outputs(video: str, out_dir: Optional[str] = None) -> list:
+    """Subtitle files an earlier sync of this clip left behind (newest first), looking in out_dir
+    and next to the clip. Matches both "<clip>_synced_....srt" and the older "<clip>.synced.srt"."""
+    stem = os.path.splitext(os.path.basename(video))[0].lower()
+    dirs = {os.path.dirname(os.path.abspath(video))}
+    if out_dir:
+        dirs.add(os.path.abspath(out_dir))
+    found = []
+    for d in dirs:
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for f in names:
+            fl = f.lower()
+            if fl.endswith(".words.srt") or not fl.endswith(".srt"):
+                continue
+            if fl.startswith(stem + "_synced_") or fl == stem + ".synced.srt":
+                found.append(os.path.join(d, f))
+    return sorted(found, key=lambda p: os.path.getmtime(p), reverse=True)
+
+
 def scan_folder(folder: str) -> list:
     """-> list of (video_path, script_path_or_None) for every clip in a folder."""
     out = []

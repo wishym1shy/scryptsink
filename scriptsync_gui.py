@@ -371,7 +371,9 @@ class App(tk.Tk):
                 return
         job = core.Job(video=video, script_path=script, script_text=text)
         iid = self.tree.insert("", "end", values=("", "", "", "", ""))
-        self.entries[iid] = {"iid": iid, "job": job, "result": None, "status": ""}
+        synced_before = bool(core.previous_outputs(video, self.var_out.get().strip() or None))
+        self.entries[iid] = {"iid": iid, "job": job, "result": None, "status": "",
+                             "synced_before": synced_before}
         self._refresh_row(self.entries[iid])
         # read the clip's frame rate in the background (ffmpeg takes a moment per clip)
         threading.Thread(target=lambda: self.q.put(("fps", iid, core.detect_fps(video))), daemon=True).start()
@@ -405,7 +407,8 @@ class App(tk.Tk):
             sc = "⚠ none yet - choose or paste one"
         if job.line_breaks and (job.script_text or job.script_path):
             sc += "  + your line breaks"
-        st = e["status"] or ("Ready" if (job.script_text or job.script_path) else "Needs a script")
+        ready = "Ready (synced before)" if e.get("synced_before") else "Ready"
+        st = e["status"] or (ready if (job.script_text or job.script_path) else "Needs a script")
         tag = ""
         if not (job.script_text or job.script_path):
             tag = "missing"
@@ -416,6 +419,14 @@ class App(tk.Tk):
         vals = (job.label(), sc, self._fps_text(e), st,
                 match if match is not None else self.tree.set(e["iid"], "match"))
         self.tree.item(e["iid"], values=vals, tags=(tag,) if tag else ())
+        self._update_run_button()
+
+    def _update_run_button(self):
+        """'Resync' (restart icon) once every clip that would run has been synced before;
+        'Sync' while there's at least one clip that never has."""
+        todo = [e for e in self.entries.values() if e["job"].script_path or e["job"].script_text]
+        again = bool(todo) and all(e["result"] or e.get("synced_before") for e in todo)
+        self.btn_run.config(text="\u21bb  Resync" if again else "\u25b6  Sync")
 
     def add_clips(self):
         exts = " ".join("*" + x for x in sorted(core.VIDEO_EXTS))
@@ -483,6 +494,7 @@ class App(tk.Tk):
             self.tree.delete(e["iid"])
             del self.entries[e["iid"]]
             self.clear_review()
+            self._update_run_button()
 
     def clear_all(self):
         if self._busy():
@@ -491,6 +503,7 @@ class App(tk.Tk):
             self.tree.delete(iid)
         self.entries.clear()
         self.clear_review()
+        self._update_run_button()
         self.status.config(text="Add a clip and its script to begin.")
 
     def choose_out(self):
@@ -669,6 +682,7 @@ class App(tk.Tk):
                     e = self.entries.get(iid)
                     if e:
                         e["result"] = res
+                        e["synced_before"] = True
                         flagged = res.n_check + res.n_bad
                         st = "Done ✔" if not flagged and not res.warnings else \
                             f"Done - {flagged} to review" if flagged else "Done - see warning"
