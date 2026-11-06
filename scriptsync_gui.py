@@ -232,6 +232,17 @@ class App(tk.Tk):
                                                                  padx=(0, 24), pady=1)
         nums = ttk.Frame(self.adv)
         nums.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        mf = ttk.Frame(self.adv)
+        mf.grid(row=6, column=0, columnspan=2, sticky="we", pady=(8, 0))
+        self.v_modeldir = tk.StringVar(value=os.environ.get("SCRIPTSYNC_MODEL_DIR", ""))
+        ttk.Label(mf, text="Speech model folder  (blank = default)").pack(side="left")
+        ttk.Entry(mf, textvariable=self.v_modeldir, width=48).pack(side="left", padx=8)
+        ttk.Button(mf, text="Choose folder\u2026", command=self.choose_model_dir).pack(side="left")
+        ttk.Button(mf, text="Clear", command=lambda: self.v_modeldir.set("")).pack(side="left", padx=(6, 0))
+        ttk.Label(self.adv, style="Sub.TLabel", text=(
+            f"Default: {core.default_model_dir()}   (models are 150 MB-1.6 GB; changing the folder downloads "
+            "them again)")
+                  ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
         for lbl, var, lo, hi, inc in (("Shortest subtitle (sec)", self.v_mincue, 0.2, 3, 0.1),
                                       ("Hold through pauses up to (sec)", self.v_bridge, 0, 2, 0.1),
                                       ("Longest subtitle (sec)", self.v_maxsec, 2, 15, 0.5)):
@@ -407,6 +418,15 @@ class App(tk.Tk):
         if d:
             self.var_out.set(d)
 
+    def choose_model_dir(self):
+        d = filedialog.askdirectory(title="Where should the speech model files be kept?")
+        if not d:
+            return
+        try:
+            self.v_modeldir.set(core.check_model_dir(d))
+        except core.SyncError as e:
+            messagebox.showerror("Can't use that folder", str(e))
+
     # ------------------------------------------------------------ settings
     def current_settings(self) -> core.Settings:
         try:
@@ -434,6 +454,7 @@ class App(tk.Tk):
             prime_vocab=self.v_prime.get(),
             include_unheard=self.v_unheard.get(),
             use_cache=self.v_cache.get(),
+            model_dir=self.v_modeldir.get().strip(),
         )
 
     def _save_settings(self):
@@ -441,7 +462,8 @@ class App(tk.Tk):
                 "out": self.var_out.get(), "brackets": self.v_brackets.get(), "labels": self.v_labels.get(),
                 "lines": self.v_lines.get(), "zero": self.v_zero.get(), "prime": self.v_prime.get(),
                 "unheard": self.v_unheard.get(), "cache": self.v_cache.get(),
-                "mincue": self.v_mincue.get(), "bridge": self.v_bridge.get(), "maxsec": self.v_maxsec.get(), "fps": self.v_fps.get()}
+                "mincue": self.v_mincue.get(), "bridge": self.v_bridge.get(), "maxsec": self.v_maxsec.get(),
+                "fps": self.v_fps.get(), "modeldir": self.v_modeldir.get()}
         try:
             json.dump(data, open(settings_path(), "w"))
         except Exception:
@@ -466,6 +488,8 @@ class App(tk.Tk):
                     v.set(bool(d[k]))
             if d.get("fps") in FRAME_RATES:
                 self.v_fps.set(d["fps"])
+            if d.get("modeldir"):
+                self.v_modeldir.set(d["modeldir"])
             for k, v in (("mincue", self.v_mincue), ("bridge", self.v_bridge), ("maxsec", self.v_maxsec)):
                 if k in d:
                     v.set(float(d[k]))
