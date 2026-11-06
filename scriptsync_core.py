@@ -27,13 +27,17 @@ import difflib
 import hashlib
 import importlib.util
 import json
+import logging
+import logging.handlers
 import math
 import os
+import platform
 import re
 import shutil
 import subprocess
 import sys
 import time
+import threading
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
@@ -43,6 +47,135 @@ APP_NAME = "Script Sync"
 APP_AUTHOR = "wishym1shy"
 APP_URL = "https://github.com/wishym1shy/scryptsink"
 APP_VERSION = "0.1.0"
+
+log = logging.getLogger("scriptsync")
+
+
+# --------------------------------------------------------------------------
+# Logging (for debugging; stays on this computer)
+# --------------------------------------------------------------------------
+# The log never holds script text or subtitles, and folder paths are replaced by placeholders
+# (<home>, <clip folder>, ...) so a log can be pasted into a public GitHub issue as it is.
+_private: dict = {}
+_private_lock = threading.Lock()
+LOG_MAX_BYTES = 1_000_000
+LOG_BACKUPS = 4
+
+
+def app_data_dir() -> str:
+    base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "ScriptSync")
+
+
+def log_dir() -> str:
+    return os.path.join(app_data_dir(), "logs")
+
+
+def log_path() -> str:
+    return os.path.join(log_dir(), "scriptsync.log")
+
+
+def register_private_path(path: Optional[str], label: str):
+    """Hide this folder (and everything in it) behind `label` in the log."""
+    if not path:
+        return
+    d = os.path.abspath(path)
+    if len(d) < 4:                                  # never register a drive root like C:/
+        return
+    with _private_lock:
+        _private[d] = label
+
+
+def scrub(text: str) -> str:
+    """Replace private folder paths in text: registered folders first (longest first), then home."""
+    with _private_lock:
+        items = sorted(_private.items(), key=lambda kv: -len(kv[0]))
+    home = os.path.expanduser("~")
+    if len(home) > 3:
+        items.append((home, "<home>"))
+    for path, label in items:
+        for variant in {path, path.replace("\\", "/")}:
+            text = re.sub(re.escape(variant), lambda _m: label, text,
+                          flags=re.IGNORECASE if os.name == "nt" else 0)
+    return text
+
+
+class _ScrubFormatter(logging.Formatter):
+    def format(self, record):
+        return scrub(super().format(record))
+
+
+def setup_logging(directory: Optional[str] = None, console: bool = False) -> Optional[str]:
+    """Send this program's log to a rotating file (about 5 x 1 MB at most). Safe to call twice;
+    returns the log file's path, or None if it can't be written (the app then runs without one)."""
+    lg = logging.getLogger("scriptsync")
+    lg.setLevel(logging.DEBUG)
+    lg.propagate = False
+    for h in list(lg.handlers):
+        lg.removeHandler(h)
+        h.close()
+    fmt = _ScrubFormatter("%(asctime)s %(levelname)-7s %(message)s", "%Y-%m-%d %H:%M:%S")
+    if console:
+        ch = logging.StreamHandler()
+        ch.setFormatter(fmt)
+        ch.setLevel(logging.INFO)
+        lg.addHandler(ch)
+    d = directory or log_dir()
+    path = os.path.join(d, "scriptsync.log")
+    try:
+        os.makedirs(d, exist_ok=True)
+        fh = logging.handlers.RotatingFileHandler(path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS,
+                                                  encoding="utf-8", delay=True)
+    except OSError:
+        lg.addHandler(logging.NullHandler())
+        return None
+    fh.setFormatter(fmt)
+    lg.addHandler(fh)
+    return path
+
+
+def _pkg_version(name: str) -> str:
+    try:
+        from importlib.metadata import version
+        return version(name)
+    except Exception:
+        return "not installed"
+
+
+def system_info() -> dict:
+    """What we'd ask a user first when debugging. Cheap: imports no speech libraries."""
+    ff = find_ffmpeg()
+    return {
+        "app": f"{APP_NAME} {APP_VERSION}",
+        "python": platform.python_version() + (" (64-bit)" if sys.maxsize > 2 ** 32 else " (32-bit)"),
+        "os": platform.platform(),
+        "faster-whisper": _pkg_version("faster-whisper"),
+        "ctranslate2": _pkg_version("ctranslate2"),
+        "numpy": _pkg_version("numpy"),
+        "ffmpeg": ("system" if ff and ff == shutil.which("ffmpeg") else "bundled (imageio-ffmpeg)") if ff
+        else "NOT FOUND",
+    }
+
+
+def log_tail(lines: int = 80) -> str:
+    try:
+        with open(log_path(), encoding="utf-8", errors="replace") as f:
+            return "".join(f.readlines()[-lines:])
+    except OSError:
+        return "(no log yet)"
+
+
+def diagnostics() -> str:
+    """Text for a bug report: system info plus the end of the log (already scrubbed)."""
+    info = "\n".join(f"{k}: {v}" for k, v in system_info().items())
+    return scrub(f"{info}\n\n--- last lines of the log ---\n{log_tail()}")
+
+
+def _short_settings(s) -> str:
+    return (f"model={s.model} language={s.language} device={s.device} max_chars={s.max_chars} "
+            f"max_words={s.max_words} fps={s.fps:g} cache={'on' if s.use_cache else 'off'} "
+            f"custom_model_folder={'yes' if s.model_dir.strip() else 'no'}")
+
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mxf", ".mp3", ".wav", ".m4a"}
 SCRIPT_EXTS = [".docx", ".txt", ".md", ".srt"]  # order = preference when auto-matching
@@ -987,7 +1120,11 @@ def _load_whisper(model: str, device: str, progress, model_dir: str = ""):
     progress(0.02, f"Loading speech model '{model}' from {where} "
                    "(first time downloads it - this can take a few minutes)")
     ctype = "int8" if device == "cpu" else "float16"
+    t0 = time.monotonic()
+    log.info("model: loading '%s' on %s (%s), %s folder", model, device, ctype,
+             "custom" if model_dir else "default")
     m = WhisperModel(model, device=device, compute_type=ctype, download_root=model_dir or None)
+    log.info("model: ready in %.1f s", time.monotonic() - t0)
     _model_cache[key] = m
     return m
 
@@ -1115,6 +1252,7 @@ def _whisper_transcribe(path, s: Settings, hint: str, progress, cancel):
         return words, dur, info.language
 
     dev = s.device if s.device != "auto" else _auto_device()
+    log.info("device: %s (%s)", dev, "chosen automatically" if s.device == "auto" else "set by the user")
     try:
         return run(dev)
     except (Cancelled, SyncError):
@@ -1123,6 +1261,7 @@ def _whisper_transcribe(path, s: Settings, hint: str, progress, cancel):
         if dev == "cpu":
             raise
         # GPU libraries missing/unusable -> retry on CPU
+        log.warning("device: GPU not usable, falling back to CPU", exc_info=True)
         _model_cache.pop((s.model, dev, model_dir), None)
         progress(0.05, f"GPU not usable ({type(e).__name__}); using CPU")
         return run("cpu")
@@ -1151,19 +1290,22 @@ def transcribe(path: str, s: Settings, lines: list, progress, cancel):
         try:
             d = json.load(open(cpath, encoding="utf-8"))
             progress(0.85, "Using the saved transcript for this clip")
+            log.info("transcript: saved copy reused (%d words, %.1f s)", len(d["words"]), d["duration"])
             return [AsrWord(**w) for w in d["words"]], d["duration"], d.get("language", "")
         except Exception:
-            pass
+            log.warning("transcript: saved copy unreadable, listening again", exc_info=True)
+    log.info("transcript: listening with %s", "test plugin" if plugin else "faster-whisper")
     if plugin:
         words, dur, lang = plugin.transcribe(path, s.language, hint, progress, cancel)
         words = [w if isinstance(w, AsrWord) else AsrWord(*w) for w in words]
     else:
         words, dur, lang = _whisper_transcribe(path, s, hint, progress, cancel)
+    log.info("transcript: %d words, %.1f s of audio, language %s", len(words), dur or 0, lang or "?")
     try:
         json.dump({"words": [w.__dict__ for w in words], "duration": dur, "language": lang},
                   open(cpath, "w", encoding="utf-8"))
     except OSError:
-        pass
+        log.warning("transcript: couldn't save a copy for next time", exc_info=True)
     return words, dur, lang
 
 
@@ -1193,11 +1335,41 @@ def sync_words(lines: list, asr: list, duration: float, s: Settings) -> SyncResu
 
 
 def run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> SyncResult:
+    """Sync one clip and write its files. Logs each step and how long it took."""
+    register_private_path(os.path.dirname(os.path.abspath(job.video)), "<clip folder>")
+    if job.script_path:
+        register_private_path(os.path.dirname(os.path.abspath(job.script_path)), "<script folder>")
+    if job.out_dir:
+        register_private_path(job.out_dir, "<output folder>")
+    t0 = time.monotonic()
+    log.info("sync start: %s", job.label())
+    try:
+        res = _run_job(job, s, progress, cancel)
+    except Cancelled:
+        log.info("sync stopped by the user after %.1f s: %s", time.monotonic() - t0, job.label())
+        raise
+    except SyncError as e:
+        log.warning("sync failed after %.1f s: %s: %s", time.monotonic() - t0, job.label(), e)
+        raise
+    except Exception:
+        log.exception("sync crashed after %.1f s: %s", time.monotonic() - t0, job.label())
+        raise
+    log.info("sync done in %.1f s: %s -> %d cues (%d OK, %d CHECK, %d BAD), %.0f%% heard%s",
+             time.monotonic() - t0, job.label(), len(res.cues), res.n_ok, res.n_check, res.n_bad,
+             res.match_pct, "".join(f"; warning: {w}" for w in res.warnings))
+    return res
+
+
+def _run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> SyncResult:
     progress = progress or (lambda f, m: None)
     if not os.path.exists(job.video):
         raise SyncError(f"Can't find the clip: {job.video}")
     fps, fps_source = clip_fps(job, s)
     s = replace(s, fps=fps)
+    script_kind = ("pasted text" if job.script_text and job.script_text.strip() else
+                   os.path.splitext(job.script_path or "")[1].lower() + " file")
+    log.info("settings: %s; frame rate %s (%s); script: %s%s", _short_settings(s), fps_name(fps),
+             fps_source, script_kind, "; with the user's own line breaks" if job.line_breaks else "")
     if job.script_text is not None and job.script_text.strip():
         raw, script_label = job.script_text, "(pasted text)"
     elif job.script_path:
@@ -1216,11 +1388,15 @@ def run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> Sy
         script_label += f" + your line breaks ({len(lines)} lines)"
         # each of the user's lines becomes exactly one cue
         s_cues = replace(s, keep_script_lines=True, max_chars=10 ** 6, max_cue_seconds=10 ** 6, max_words=0)
+    t = time.monotonic()
     asr, dur, lang = transcribe(job.video, s, hint_lines, progress, cancel)
+    log.info("step: listening took %.1f s", time.monotonic() - t)
     if cancel and cancel.is_set():
         raise Cancelled()
     progress(0.88, "Matching the script to the audio")
+    t = time.monotonic()
     res = sync_words(lines, asr, dur, s_cues)
+    log.info("step: matching %d script lines took %.2f s", len(lines), time.monotonic() - t)
     if s_cues is not s:
         long_lines = sum(1 for ln in lines if len(ln) > s.max_chars)
         if long_lines:
@@ -1237,6 +1413,8 @@ def run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> Sy
     res.report_path = os.path.join(out_dir, stem + ".review.txt")
     progress(0.96, "Writing files")
     try:
+        log.info("output: %s (+ review sheet%s)", os.path.basename(res.srt_path),
+                 ", word timings" if s.export_words else "")
         with open(res.srt_path, "w", encoding="utf-8", newline="") as f:
             f.write(res.srt_text)
         with open(res.report_path, "w", encoding="utf-8", newline="") as f:
@@ -1375,7 +1553,10 @@ def main(argv=None):
     ap.add_argument("--print-prompt", action="store_true",
                     help="print a prompt for re-cutting this script in an AI tool of your choice, then exit")
     ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("-v", "--verbose", action="store_true", help="also print the log to the terminal")
     a = ap.parse_args(argv)
+    setup_logging(console=a.verbose)
+    log.info("command line start: %s", " ".join(f"{k}={v}" for k, v in system_info().items()))
     if a.fps.strip().lower() == "auto":
         clip_rate = None
     else:

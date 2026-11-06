@@ -340,6 +340,68 @@ def test_outputs_are_not_taken_for_scripts():
     assert find_script_for(os.path.join(d, "clip.mp4")).endswith("clip.srt")
 
 
+def test_logging_keeps_paths_private_and_records_steps():
+    """The log must be safe to paste into a public issue: no folder names, no script text."""
+    import tempfile, logging
+    d = tempfile.mkdtemp()
+    client = os.path.join(d, "Acme Client Videos")          # a folder name that must never reach the log
+    os.makedirs(client)
+    clip = os.path.join(client, "promo.mp4"); open(clip, "wb").write(b"not really a video")
+    plugin = os.path.join(d, "plugin.py")
+    open(plugin, "w").write(
+        "def transcribe(path, language, hint, progress, cancel):\n"
+        "    words, t = [], 0.5\n"
+        "    for w in 'secret launch words here'.split():\n"
+        "        words.append((w, t, t + 0.3, 0.9)); t += 0.35\n"
+        "    return words, t + 0.5, 'en'\n")
+    old_env = {k: os.environ.get(k) for k in ("SCRIPTSYNC_ASR_PLUGIN", "LOCALAPPDATA")}
+    os.environ["SCRIPTSYNC_ASR_PLUGIN"] = plugin
+    os.environ["LOCALAPPDATA"] = d
+    try:
+        path = setup_logging()
+        assert path == log_path() and path.startswith(d)
+        res = run_job(Job(clip, script_text="Secret launch words here."), Settings())
+        try:                                              # a crash inside run_job is logged with its traceback
+            run_job(Job(clip, script_text="x", out_dir=os.path.join(client, "out")), Settings(max_chars="oops"))
+        except Exception:
+            pass
+        try:
+            run_job(Job(os.path.join(client, "missing.mp4"), script_text="x"), Settings())
+        except SyncError:
+            pass
+        logging.getLogger("scriptsync").handlers[0].flush()
+        text = open(path, encoding="utf-8").read()
+        print(text)
+        assert "sync start: promo.mp4" in text and "step: listening took" in text and "sync done in" in text
+        assert "Traceback" in text and "sync crashed" in text and "sync failed" in text
+        assert "Acme Client" not in text, "a private folder name leaked into the log"
+        assert "<clip folder>" in text
+        assert "Secret launch" not in text and "secret launch" not in text, "script/transcript text leaked"
+        home = os.path.expanduser("~")
+        assert len(home) <= 3 or home not in text
+        diag = diagnostics()
+        assert "faster-whisper:" in diag and "Acme Client" not in diag
+    finally:
+        setup_logging(directory=tempfile.mkdtemp())       # detach from the temp folder
+        for k, v in old_env.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+
+
+def test_log_rotates():
+    import tempfile, logging
+    d = tempfile.mkdtemp()
+    setup_logging(directory=d)
+    lg = logging.getLogger("scriptsync")
+    for i in range(30000):
+        lg.info("filler line %d %s", i, "x" * 40)
+    for h in lg.handlers: h.flush()
+    files = sorted(os.listdir(d))
+    assert files[:2] == ["scriptsync.log", "scriptsync.log.1"] and len(files) <= 1 + LOG_BACKUPS, files
+    assert all(os.path.getsize(os.path.join(d, f)) <= LOG_MAX_BYTES + 200 for f in files)
+    setup_logging(directory=tempfile.mkdtemp())
+
+
 def test_decode_audio_without_pyav():
     """Regression: faster-whisper's own loader calls av.open(metadata_errors=...), which crashes on older
     PyAV. decode_audio must work (via ffmpeg) even if PyAV can't be imported at all."""
