@@ -11,12 +11,15 @@ import queue
 import subprocess
 import sys
 import threading
-import traceback
+import logging
+import time
 import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import scriptsync_core as core
+
+log = core.log
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -414,6 +417,11 @@ class App(tk.Tk):
             f"Default: {core.default_model_dir()}   (models are 150 MB-1.6 GB; changing the folder downloads "
             "them again)")
                   ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        tf = ttk.Frame(self.adv)
+        tf.grid(row=8, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Label(tf, text="Troubleshooting").pack(side="left")
+        ttk.Button(tf, text="Open log folder", command=self.open_logs).pack(side="left", padx=8)
+        ttk.Button(tf, text="Copy diagnostic info", command=self.copy_diagnostics).pack(side="left")
         for lbl, var, lo, hi, inc in (("Shortest subtitle (sec)", self.v_mincue, 0.2, 3, 0.1),
                                       ("Hold through pauses up to (sec)", self.v_bridge, 0, 2, 0.1),
                                       ("Longest subtitle (sec)", self.v_maxsec, 2, 15, 0.5)):
@@ -640,6 +648,27 @@ class App(tk.Tk):
         if d:
             self.var_out.set(d)
 
+    # ------------------------------------------------------------ troubleshooting
+    def open_logs(self):
+        d = core.log_dir()
+        os.makedirs(d, exist_ok=True)
+        open_path(d)
+
+    def copy_diagnostics(self):
+        self.clipboard_clear()
+        self.clipboard_append(core.diagnostics())
+        messagebox.showinfo("Diagnostic info copied", (
+            "Version, system details and the end of the log are on the clipboard, ready to paste into a "
+            "GitHub issue.\n\nFolder paths are hidden, but clip names are included: read it before "
+            "posting it publicly."))
+
+    def report_callback_exception(self, exc, val, tb):
+        """Errors in button handlers etc. (tkinter would print them to a console nobody sees)."""
+        log.error("unexpected error in the window", exc_info=(exc, val, tb))
+        messagebox.showerror("Something went wrong", (
+            f"{exc.__name__}: {val}\n\nThe details are in the log (More options > Open log folder). "
+            "Please include it if you report this."))
+
     def choose_model_dir(self):
         d = filedialog.askdirectory(title="Where should the speech model files be kept?")
         if not d:
@@ -752,10 +781,13 @@ class App(tk.Tk):
         self.cancel.clear()
         self.btn_run.config(state="disabled")
         self.btn_cancel.config(state="normal")
+        log.info("batch start: %d clip(s)", len(todo))
+        self._batch_t0 = time.monotonic()
         self.worker = threading.Thread(target=self._work, args=(todo, s), daemon=True)
         self.worker.start()
 
     def stop(self):
+        log.info("Stop pressed")
         self.cancel.set()
         self.status.config(text="Stopping after the current step…")
 
@@ -776,9 +808,8 @@ class App(tk.Tk):
                 self.q.put(("row", e["iid"], "Stopped", None))
             except core.SyncError as ex:
                 self.q.put(("row", e["iid"], f"Error: {ex}", None))
-            except Exception as ex:  # unexpected
-                traceback.print_exc()
-                self.q.put(("row", e["iid"], f"Error: {type(ex).__name__}: {ex}", None))
+            except Exception as ex:  # unexpected; run_job has already logged the traceback
+                self.q.put(("row", e["iid"], f"Error: {type(ex).__name__}: {ex} (details in the log)", None))
         self.q.put(("finished", n))
 
     def _poll(self):
@@ -823,6 +854,9 @@ class App(tk.Tk):
                     self.btn_cancel.config(state="disabled")
                     self.progress["value"] = 0 if self.cancel.is_set() else 1000
                     done = sum(1 for e in self.entries.values() if e["result"])
+                    log.info("batch %s in %.1f s: %d of %d clip(s) synced",
+                             "stopped" if self.cancel.is_set() else "finished",
+                             time.monotonic() - getattr(self, "_batch_t0", time.monotonic()), done, m[1])
                     self.status.config(text=f"Finished: {done} of {m[1]} clip(s) synced."
                                        if not self.cancel.is_set() else "Stopped.")
         except queue.Empty:
@@ -955,14 +989,37 @@ class App(tk.Tk):
         self.destroy()
 
 
+def _install_crash_logging():
+    """Uncaught errors anywhere end up in the log instead of a console nobody sees (pythonw)."""
+    def hook(exc, val, tb):
+        log.critical("uncaught error", exc_info=(exc, val, tb))
+    sys.excepthook = hook
+
+    def thread_hook(args):
+        if args.exc_type is not SystemExit:
+            log.error("uncaught error in a background thread (%s)",
+                      getattr(args.thread, "name", "?"), exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+    threading.excepthook = thread_hook
+
+
 def main():
+    core.setup_logging()
+    _install_crash_logging()
     if sys.platform.startswith("win"):          # crisp text on high-DPI screens
         try:
             import ctypes
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
-            pass
-    App().mainloop()
+            log.debug("DPI awareness not available", exc_info=True)
+    log.info("app start: %s", "; ".join(f"{k}={v}" for k, v in core.system_info().items()))
+    app = App()
+    log.info("window: %s, display scaling %.0f%%", app.geometry().split("+")[0],
+             float(app.tk.call("tk", "scaling")) / (96 / 72) * 100)
+    try:
+        app.mainloop()
+    finally:
+        log.info("app closed")
+        logging.shutdown()
 
 
 if __name__ == "__main__":

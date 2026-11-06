@@ -182,6 +182,20 @@ Everything runs locally; clips and scripts never leave your machine. Transcripts
 An NVIDIA GPU is used automatically when available, otherwise the CPU (a 60 s clip takes very roughly 15-40 s
 on the default model).
 
+## Troubleshooting
+
+Script Sync keeps a log of what it does (app version, settings used, how long each step took, which device the
+speech model ran on, and the full details of any error). It stays on your computer:
+
+- Windows: `%LOCALAPPDATA%\ScriptSync\logs\scriptsync.log`
+- macOS / Linux: `~/.cache/ScriptSync/logs/scriptsync.log`
+
+It is capped at about 5 MB (older entries are dropped). In the app: **More options > Troubleshooting**:
+**Open log folder**, or **Copy diagnostic info** to put the version, system details and the end of the log on the
+clipboard for a bug report. Folder paths are replaced by placeholders such as `<clip folder>` and `<home>`, and the
+log never contains your script or subtitle text; clip file names are included, so read it before posting it publicly.
+On the command line, add `-v` to also print the log to the terminal.
+
 ## Limitations
 
 - Numbers said differently from how they're written ("2025" vs "twenty twenty five") show up as CHECK.
