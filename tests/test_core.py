@@ -1,4 +1,4 @@
-import os, sys, re, json
+import os, sys, re, json, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scriptsync_core import *
 
@@ -235,6 +235,9 @@ def test_line_breaks_run_job_reuses_transcript():
         assert [c.text for c in res2.cues] == breaks.split("\n"), [c.text for c in res2.cues]
         assert open(calls).read() == "x", "the second run must reuse the saved transcript"
         assert os.path.exists(res2.words_json_path) and os.path.exists(res2.words_srt_path)
+        assert res1.srt_path != res2.srt_path and os.path.exists(res1.srt_path), "earlier sync overwritten"
+        assert os.path.basename(res2.srt_path).startswith("clip_synced_40ch_0w_30fps_")
+        assert res2.report_path == res2.srt_path[:-4] + ".review.txt"
         assert "your line breaks" in res2.report_text
         try:
             run_job(Job(clip, script_text=script, line_breaks="Hello friends,\nwelcome."), s); assert False
@@ -250,6 +253,32 @@ def test_llm_prompt_has_rules_and_script():
     p = llm_prompt(["Hello there.", "Second line"], Settings(max_chars=32, max_words=4))
     assert "32 characters" in p and "4 words" in p and p.rstrip().endswith("Hello there.\nSecond line")
     assert "Do NOT change" in p
+
+
+def test_output_names():
+    """Every sync gets a new name: clip + synced + max chars + max words + fps + date/time."""
+    import tempfile
+    when = time.mktime((2026, 11, 6, 14, 32, 5, 0, 0, -1))
+    s = Settings(max_chars=32, max_words=4, fps=30000 / 1001)
+    assert output_stem("/x/My Clip.mp4", s, when) == "My Clip_synced_32ch_4w_29.97fps_2026-11-06_14-32-05"
+    assert output_stem("a.mov", Settings(fps=0), when).startswith("a_synced_40ch_0w_nosnap_")
+    assert fps_label(25.0) == "25fps" and fps_label(24000 / 1001) == "23.976fps" and fps_label(23.5) == "23.5fps"
+    d = tempfile.mkdtemp()
+    open(os.path.join(d, "c_synced_x.srt"), "w").close()
+    assert unique_stem(d, "c_synced_x") == "c_synced_x_2"
+    assert unique_stem(d, "c_synced_y") == "c_synced_y"
+
+
+def test_outputs_are_not_taken_for_scripts():
+    import tempfile
+    d = tempfile.mkdtemp()
+    for f in ("clip.mp4", "clip_synced_40ch_0w_30fps_2026-11-06_14-32-05.srt",
+              "clip_synced_40ch_0w_30fps_2026-11-06_14-32-05.review.txt", "clip.review.txt",
+              "clip.synced.srt", "clip_synced_40ch_0w_30fps_2026-11-06_14-32-05.words.srt"):
+        open(os.path.join(d, f), "w").close()
+    assert find_script_for(os.path.join(d, "clip.mp4")) is None
+    open(os.path.join(d, "clip.srt"), "w").close()          # a real (old) subtitle used as the script
+    assert find_script_for(os.path.join(d, "clip.mp4")).endswith("clip.srt")
 
 
 def test_decode_audio_without_pyav():
