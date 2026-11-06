@@ -82,6 +82,12 @@ default "Balanced" size).
 Windows may show a SmartScreen warning for the `.bat` file because it was downloaded from the internet.
 Choose **More info**, then **Run anyway** if you trust the source (you can read the file first; it is short).
 
+**Where things are installed.** The app itself (and its `.venv`) lives in the folder you extracted. Speech models
+go to the shared Hugging Face cache by default (`%USERPROFILE%\.cache\huggingface\hub` on Windows,
+`~/.cache/huggingface/hub` on macOS). To keep them somewhere else, for example a bigger drive, set
+**More options > Speech model folder** before your first sync (or `--model-dir` / the `SCRIPTSYNC_MODEL_DIR`
+environment variable on the command line). Changing it later downloads the model again into the new folder.
+
 ### Manual install (optional)
 
 From inside the project folder:
