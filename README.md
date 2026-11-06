@@ -117,6 +117,13 @@ python -m venv .venv
    sync again with different settings and compare.
 4. The Review panel colours each subtitle: green OK, amber CHECK, red BAD, with a note on what to look at.
 
+The **status bar** at the bottom always says what the app is doing: Standing by (yellow), Clips loaded / Ready
+(orange), Running with a timer, then Finished in m:ss (green), or Stopped / Error (red; click **Details…** for what
+went wrong). **Ctrl+Enter** starts a sync.
+
+**Night mode:** the sun/moon button at the top right switches between light and night. Until you use it, the app
+follows your system's light/dark setting.
+
 An existing `.srt` also works as the script: only its text is used and the timing is redone from the footage,
 which helps when footage was re-cut after the SRT was made.
 
