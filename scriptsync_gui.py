@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import traceback
+import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -39,6 +40,97 @@ AUTO_FPS = "Auto (match the clip)"
 ACCENT = "#d9822b"
 BG = "#f6f5f2"
 TAGS = {"ok": "#e6f4ea", "check": "#fff3d1", "bad": "#fbdada"}
+
+# GitHub mark (github.com/logos), pre-rendered so no image library is needed: "dark" is for light
+# backgrounds, "light" for dark ones (night mode). 26 px, and 52 px for high-DPI displays.
+GITHUB_MARK = {
+    ("dark", 26): (
+    "iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAADiElEQVR4nKRWW2wMYRQ+559pRV2CtGlJpKpTdldtXYKQICSa"
+    "CCHuPHkTIcQLEX0Qt3ghiBCeeJW4JDREBBHBk8Ru2Z2VXSouEW1dKtrq7s7xzZTamd3tZfu9zD/nP+f7zvnP//8zOvWDqqm1"
+    "QY3VSiJeRiwTYar4O/WZhN/jeVdYGhPR8Mu+eDjfxKSawAxd1y/AZR4NBCKPSPHOeCT0amBCgUCxIfopTO2gQUIAJj4dN0N7"
+    "8ZrOK1Tp94/XpegWM8+mIUBIHndJ95qPptn2z6b+DQzDGAaRxqGK2EBVC4dz8XUMtSwhKhpxHiKzMrLaahHtx6ClX2ahVqxb"
+    "gyW0LkNuUbU/ePy/OGD4ps8nVk9740S+JMxwuTNnGKOlqOSwCHUIWw81oaRttyylIbHFrKQ01akONDe/+N7DFUwQ8+S/PAJx"
+    "/9tYOKb3JKROZDaLmXrXNh6Pt+OxJ08t97Ms7KzA5B4eZo3kKIYblH1OQLzAvRJcSX1s/T4hZLiFeX1VVW25Ukpb7fVli846"
+    "IYXoMJ/J4ivWVmAzSL3LUSj9nbqOUYHo/KGftDlcQorqIcQTPTmFWmOxn1QgPn163oFWPHdTSo1iklKXkekXDRE4Gq0uSqZJ"
+    "Cova6fEaS0MEdtE4NyenFTr+2qM+ZcKE2SVUKHBX4sarc+tITIHY9ORTXDIqtZYKhJHWVoNzuMsoFEVFVizLm6WhLBAYSYNE"
+    "eXlwhCh1MIuO2FSclGsYp9wz7Btt6U+qfbULBiqCa2zxyLH0DP2Z5plKWt3Jq87pr/bVXUS527ANb6aF9ilFp5DFcnsOZ+Ip"
+    "duY9i+TaG7OpyUUeqJuG62wLmlCP+Dm5U5Dz8Wh4p3N7d0vXITD+RiWrNEXb2zm1Ee8feorD9cR80PmmedGdtD90DflEENOV"
+    "4tQRe+x8L9rb2n6OKa2wN8YSVDB3mPANTqUvkdLGwP0b7r7GN7Gmy16ir19bWsaVVqxBEypyFsNy6G301W1nmGmv9gXP4MLd"
+    "DfIoMlnaHIl8pn6AmPuIWZpdjXU2YTbt7tX0Ohj+4Dnnf0GoHetyx64IPUglzNCu3EJ1D+yV8Mg4fcm0KG+g7YBDvBki35DF"
+    "JvRgO8wzKR9Yinrpid7ZsV6RnEI2EtHQFU7+mor6DyCwA2SSX4fSjg987Rg7Nqcf9QPDmFlG9LssHo9Ecs1X1tT6dUu1JRLh"
+    "L33x/AEAAP//ewu0tgAAAAZJREFUAwCJ5F7ziFQ53wAAAABJRU5ErkJggg=="),
+    ("dark", 52): (
+    "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"
+    "AAAAAElFTkSuQmCC"),
+    ("light", 26): (
+    "iVBORw0KGgoAAAANSUhEUgAAABoAAAAaCAYAAACpSkzOAAADWElEQVR4nKxWXUgUURQ+Z2Z03V2ztR/6oaCC/un/IYooEKKH"
+    "gqiIeus1lOwpCCWK6OexxJAg6K0HwV4qkB6iH9Ei6MGo1MCgghBT3NV2Vp25e/ruuJuz464/ax/M3jPnnnO+e8+9c85aNAP+"
+    "jMl2N50+RiKH8bpaiJZrPRP1YfgJ6blpGs8WhPjTdHG40MTQuOxk170Pk700CwjJa8u0akD4eVZEIlKaSKk7EKtp7hAmuVsR"
+    "ti4xsypIlEzKCofcp8S8h+YB7K7NDFsnKpgHpxBhJ6GE7XaAZDf9B4DsTSxsVWV3ZmQnErZq8pMw0zn8XobH71lEHYBDPS7K"
+    "qX/+xAcTKff25DswbMu+NKkOn2N/LGot80SRinjKvc5CNpn0UoScjKMpaTrEBi+RMrOukjmu9XHb7cWwLhvJMMzNFWXc4xEN"
+    "2U47VrB/kki6YtGSLVQE4rbzLnBTW2IR6zR734lSnZSTCbJjYbMc+RWaI+JJF2mkxX6dFTaXGyqdPh40xhVtLIbE8zW4Iahz"
+    "RtVRRtrakLYDPr1aGDaRch6hIoAzjeA7HIZo+tTNuHW8OmDZWSyJBnxtBPkQiLleX+8lOTqmJM0XwgMB+jUGTiKVa0SVNF+w"
+    "LApolCEsX3NsmDfoPFOR0LVSiHfk6Fh6sCPuDtiWDo+qk1QkcBGO4+MM+3Xg6DKwhR6auqp6POU0R8AniufqFD1zt0GG8Riy"
+    "mzvFm1BK2lGa9tMsMZKSQ/B5i9RvDUw5ITJajFgZ9+ICPPSYiZ6gNm2C0AqH7ah/7bo8DSWda6gg26YEH5Ot8aRzA2XnvRL1"
+    "Cj7b8qzhQSTCP7xahz600mH1DWIo07iuxFOqC5OrstaWae4oD/HHANEWpVTejprBKMrPWtSyPq9NRKP8C6u5NbErrk3YtBGB"
+    "j2CHj3SLxngvSKKBtv0FZ9JZiAUxb2oST/ZPIE0NKEe1unpbEasqazQdcC4vMFQF9VhcY2XEqs2+W/7JykjJRThaWEq1Y6se"
+    "yK1YyhB6kAunCwW48v3BafKTaBhBC/SOGgxnNQHGM1jaeaxvFxUAUlsyKdN37ZuJQdMSZcia0Y82Ymd1ujdNxCgI5dnAVvto"
+    "33xGTDNgRGQpjdNSffB558dkM5XS4ALm/uni/AUAAP//Lv0oEQAAAAZJREFUAwArs2cfof3zjQAAAABJRU5ErkJggg=="),
+    ("light", 52): (
+    "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"
+    "SUVORK5CYII="),
+}
 
 
 def settings_path():
@@ -71,6 +163,33 @@ def reveal(path):
             subprocess.Popen(["xdg-open", os.path.dirname(path)])
     except Exception as e:
         messagebox.showerror("Couldn't open", str(e))
+
+
+class _Tooltip:
+    """Small hover hint for a widget."""
+
+    def __init__(self, widget, text):
+        self.widget, self.text, self.tip = widget, text, None
+        widget.bind("<Enter>", self.show, add="+")
+        widget.bind("<Leave>", self.hide, add="+")
+
+    def show(self, _e=None):
+        if self.tip:
+            return
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        tk.Label(self.tip, text=self.text, bg="#24292f", fg="#ffffff", padx=8, pady=4,
+                 font=("Segoe UI", 9)).pack()
+        self.tip.update_idletasks()
+        # right-aligned under the widget, so it stays inside the window
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() - self.tip.winfo_width()
+        self.tip.wm_geometry(f"+{max(x, 0)}+{y}")
+
+    def hide(self, _e=None):
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
 
 
 class PasteDialog(tk.Toplevel):
@@ -182,7 +301,7 @@ class App(tk.Tk):
         ttk.Label(t, text="Script Sync", style="Title.TLabel").pack(anchor="w")
         ttk.Label(t, text="Writer's script + clip  →  timed subtitle file (.srt)",
                   style="Sub.TLabel").pack(anchor="w")
-        ttk.Label(head, text=f"by {core.APP_AUTHOR}", style="Sub.TLabel").pack(side="right", anchor="s")
+        self._github_link(head).pack(side="right", anchor="center")
 
         # ---- queue
         qf = ttk.LabelFrame(self, text=" 1.  Clips and scripts ", padding=10)
@@ -354,6 +473,15 @@ class App(tk.Tk):
         sb.pack(side="right", fill="y")
         for lvl, color in TAGS.items():
             self.ctree.tag_configure(lvl, background=color)
+
+    def _github_link(self, parent):
+        """The GitHub mark, top right: opens the project page."""
+        px = float(self.tk.call("tk", "scaling")) / (96 / 72)      # 1.0 at 100% display scaling
+        self._gh_img = tk.PhotoImage(data=GITHUB_MARK[("dark", 52 if px >= 1.5 else 26)])
+        lbl = ttk.Label(parent, image=self._gh_img, cursor="hand2", padding=4)
+        lbl.bind("<Button-1>", lambda e: webbrowser.open(core.APP_URL))
+        _Tooltip(lbl, f"Script Sync on GitHub \u2014 by {core.APP_AUTHOR}")
+        return lbl
 
     def _toggle_adv(self):
         if self.adv_open.get():

@@ -41,6 +41,7 @@ from typing import Callable, Optional
 
 APP_NAME = "Script Sync"
 APP_AUTHOR = "wishym1shy"
+APP_URL = "https://github.com/wishym1shy/scryptsink"
 APP_VERSION = "0.1.0"
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mxf", ".mp3", ".wav", ".m4a"}
