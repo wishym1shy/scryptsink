@@ -36,7 +36,7 @@ import sys
 import time
 import zipfile
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
 APP_NAME = "Script Sync"
@@ -64,6 +64,7 @@ class Settings:
     model: str = "small"
     language: str = "auto"          # "auto" or a Whisper language code (en, tl, es ...)
     device: str = "auto"            # auto / cpu / cuda
+    model_dir: str = ""             # where speech models are downloaded/kept ("" = the usual shared cache)
     prime_vocab: bool = True        # hint names/brands from the script to the model
     use_cache: bool = True          # reuse a clip's transcript if nothing changed
     # script reading
@@ -72,6 +73,7 @@ class Settings:
     keep_script_lines: bool = True  # one cue per script line (split only if too long)
     # cue shape
     max_chars: int = 40             # max characters in one cue
+    max_words: int = 0              # max words in one cue (0 = no limit; short-form video often wants 2-4)
     max_cue_seconds: float = 5.0    # split cues that stay on screen longer than this
     min_cue_seconds: float = 0.8    # never flash a cue shorter than this (if room)
     bridge_gap: float = 0.4         # keep a cue up through pauses shorter than this
@@ -81,6 +83,7 @@ class Settings:
     fps: float = 30.0               # snap cue times to whole frames at this rate (0 = don't snap)
     premiere_zero_fix: bool = True  # Premiere quirk: it drops a cue that starts at 00:00:00,000
     include_unheard: bool = False   # keep cues for text that was never heard (timing = guess)
+    export_words: bool = False      # also write <clip>.words.json and <clip>.words.srt (one word per cue)
 
 
 @dataclass
@@ -116,6 +119,7 @@ class Job:
     script_path: Optional[str] = None
     script_text: Optional[str] = None
     out_dir: Optional[str] = None
+    line_breaks: Optional[str] = None   # the same script re-cut by the user / an outside tool: one cue per line
 
     def label(self):
         return os.path.basename(self.video)
@@ -137,6 +141,10 @@ class SyncResult:
     srt_text: str = ""
     report_text: str = ""
     error: str = ""
+    words: list = field(default_factory=list)      # list[Wd]: every script word with its time
+    layout: list = field(default_factory=list)     # every cue's text in script order, incl. never-heard ones
+    words_json_path: str = ""
+    words_srt_path: str = ""
 
 
 class Cancelled(Exception):
@@ -540,10 +548,72 @@ def align_script(lines: list, asr: list, audio_duration: float):
 # --------------------------------------------------------------------------
 # Cues
 # --------------------------------------------------------------------------
+# Words that lean on the word after them: a cue should not end on one of these
+# ("the | car", "in | the morning", "will | be", "my | car", "and | then").
+_GLUE_FWD = set("""
+a an the
+of to in on at for with from by into onto over under about after before between through during
+without within across against along around behind beyond near toward towards upon via per like
+and but or nor so yet because if than as that which who whom whose where when while although though unless
+my your his her its our their this that these those some any every each no
+is are was were be been being am has have had will would can could should shall may might must do does did
+not very more most much many few such
+i we they he she i'm we're you're they're it's there's that's let's
+""".split())
+# Good words to start a new cue with (break *before* conjunctions and prepositions).
+_BREAK_BEFORE = set("""
+and but or so because which who where when while although though unless until
+from with to for in on at by about after before through during without
+""".split())
+_SENT_END = re.compile(r"[.!?…]['\")\]”’]*$")
+_CLAUSE_END = re.compile(r"[,;:—–-]['\")\]”’]*$")
+_CORE = re.compile(r"^\W+|\W+$")
+
+
+def _bare(text: str) -> str:
+    return _CORE.sub("", text).lower().replace("’", "'")
+
+
+def _break_cost(ws: list, j: int, n: int) -> float:
+    """Cost of ending a cue after word j-1 (lower = more natural place to breathe)."""
+    if j >= n:
+        return 0.0
+    prev, nxt = ws[j - 1], ws[j]
+    c = 0.0
+    if _SENT_END.search(prev.text):
+        c -= 120                                   # end of a sentence: the best place to cut
+    elif _CLAUSE_END.search(prev.text):
+        c -= 45                                    # end of a clause
+    else:
+        b = _bare(prev.text)
+        if b in _GLUE_FWD:
+            c += 80                                # "the | car", "will | be", "and | then"
+        if re.search(r"\d$", prev.text) and re.match(r"[^\W\d_]", nxt.text):
+            c += 70                                # "25 | percent", "three | thousand" stays as written
+        if prev.text[:1].isupper() and nxt.text[:1].isupper() and len(_bare(prev.text)) > 1:
+            c += 40                                # a name: "Maple | Street"
+        if _bare(nxt.text) in _BREAK_BEFORE:
+            c -= 20                                # "... ring | with a ..." reads well
+        if _SENT_END.search(nxt.text) or _CLAUSE_END.search(nxt.text):
+            c += 60                                # "the classic | version," strands a scrap of the clause
+    gap = nxt.start - prev.end
+    c -= 150 * min(max(gap, 0.0), 1.0)             # the audio: a real pause is where they actually breathed,
+                                                   # and it outweighs the grammar guesses above
+    return c
+
+
 def _split_words(ws: list, s: Settings) -> list:
-    """Split one line's words into chunks that fit the cue limits."""
+    """Split one line's words into cues that fit the limits, cut where a speaker would breathe.
+
+    Dynamic programming over every possible set of cut points. In priority order it prefers:
+    cuts after sentence ends (and never two sentences in one cue), then after clause punctuation,
+    then at pauses in the audio; it avoids separating words that belong together (article + noun,
+    preposition + object, auxiliary + verb, number + unit, names) and one-word orphans, and only
+    then balances cue lengths.
+    """
     n = len(ws)
     lens = [len(w.text) for w in ws]
+    max_words = s.max_words if s.max_words and s.max_words > 0 else n
 
     def chars(i, j):
         return sum(lens[i:j]) + (j - i - 1)
@@ -551,29 +621,35 @@ def _split_words(ws: list, s: Settings) -> list:
     def secs(i, j):
         return max(w.end for w in ws[i:j]) - ws[i].start
 
-    if chars(0, n) <= s.max_chars and secs(0, n) <= s.max_cue_seconds:
+    def fits(i, j):
+        return chars(i, j) <= s.max_chars and secs(i, j) <= s.max_cue_seconds and j - i <= max_words
+
+    if fits(0, n):
         return [ws]
-    k = max(math.ceil(chars(0, n) / s.max_chars), math.ceil(secs(0, n) / s.max_cue_seconds), 2)
+    k = max(math.ceil(chars(0, n) / s.max_chars), math.ceil(secs(0, n) / s.max_cue_seconds),
+            math.ceil(n / max_words), 2)
     target = chars(0, n) / k
+    sent_end = [bool(_SENT_END.search(w.text)) for w in ws]
+    cut = [_break_cost(ws, j, n) for j in range(n + 1)]
     INF = float("inf")
     best = [INF] * (n + 1)
     back = [0] * (n + 1)
     best[0] = 0.0
     for j in range(1, n + 1):
+        joins = 0                                   # sentence ends inside ws[i:j-1]
         for i in range(j - 1, -1, -1):
-            single = (j - i == 1)
-            if not single and (chars(i, j) > s.max_chars or secs(i, j) > s.max_cue_seconds):
-                if chars(i, j) > s.max_chars:
+            if i < j - 1 and sent_end[i]:
+                joins += 1
+            if j - i > 1 and not fits(i, j):
+                if chars(i, j) > s.max_chars or j - i > max_words:
                     break
                 continue
             if best[i] == INF:
                 continue
-            c = 1000.0 + 0.1 * (chars(i, j) - target) ** 2
-            if re.search(r"[.!?;:,\u2014]['\")\u201d]*$", ws[j - 1].text):
-                c -= 30
-            if j < n:
-                gap = ws[j].start - ws[j - 1].end
-                c -= 50 * min(max(gap, 0.0), 1.0)
+            c = 100.0 + 0.06 * (chars(i, j) - target) ** 2 + cut[j]
+            c += 400 * joins                        # two sentences in one cue
+            if j - i == 1 and n > 1 and not (sent_end[i] or _CLAUSE_END.search(ws[i].text)):
+                c += 90                             # lonely one-word cue
             if best[i] + c < best[j]:
                 best[j] = best[i] + c
                 back[j] = i
@@ -593,10 +669,11 @@ def build_cues(words: list, lines: list, s: Settings, audio_duration: float):
     by_line: dict = {}
     for w in words:
         by_line.setdefault(w.line, []).append(w)
-    cues, skipped = [], []
+    cues, skipped, layout = [], [], []
     for li in sorted(by_line):
         ws = by_line[li]
         for chunk in _split_words(ws, s):
+            layout.append(" ".join(w.text for w in chunk))
             if not s.include_unheard and not any(w.anchored for w in chunk):
                 skipped.append((" ".join(w.text for w in chunk), "not heard in the audio"))
                 continue
@@ -616,7 +693,7 @@ def build_cues(words: list, lines: list, s: Settings, audio_duration: float):
     _finalize_times(cues, s, audio_duration)
     for i, c in enumerate(cues, 1):
         c.index = i
-    return cues, skipped
+    return cues, skipped, layout
 
 
 def _snap(t: float, fps: float) -> float:
@@ -683,6 +760,99 @@ def make_srt(cues: list) -> str:
     for c in cues:
         parts.append(f"{c.index}\r\n{srt_time(c.start)} --> {srt_time(c.end)}\r\n{c.text}\r\n")
     return "\r\n".join(parts)
+
+
+def make_words_json(words: list) -> str:
+    """Every script word with its time, for outside tools (e.g. an AI that re-cuts the subtitles)."""
+    return json.dumps([{
+        "word": w.text,                       # as written in the script, punctuation included
+        "start": round(w.start, 3),
+        "end": round(w.end, 3),
+        "confidence": round(w.conf, 2),
+        "heard": w.anchored,                  # False = never heard; its time is a guess
+        "heard_as": w.heard_as,               # what the speech model heard (spelling may differ)
+        "line": w.line + 1,                   # script line it belongs to (1-based)
+    } for w in words], ensure_ascii=False, indent=1)
+
+
+def make_words_srt(words: list, s: Settings) -> str:
+    """One word per cue. Never-heard words are left out unless include_unheard is set."""
+    ws = [w for w in words if w.anchored or s.include_unheard]
+    cues = []
+    for i, w in enumerate(ws):
+        end = w.end
+        if i + 1 < len(ws):
+            end = min(end, ws[i + 1].start)
+        cues.append(Cue(i + 1, w.start, max(end, w.start + 0.02), w.text, w.conf, _level(w.conf), [],
+                        w.line, 1))
+    if s.premiere_zero_fix and cues and cues[0].start < 0.067:
+        cues[0].start = 0.067
+        cues[0].end = max(cues[0].end, cues[0].start + 0.02)
+    return make_srt(cues)
+
+
+LLM_PROMPT = """Below is a video script. Re-cut it into subtitles: one subtitle per line, breaking
+where a speaker would naturally take a breath.
+
+Rules:
+- Do NOT change, add, remove or reorder any word or punctuation mark. Only move the line breaks.
+- At most {max_chars} characters per line{max_words}.
+- Break after the end of a sentence first, then after commas and other clause punctuation.
+- Never put the end of one sentence and the start of the next on the same line.
+- Keep together words that belong together: "the" + its noun, a preposition + its object,
+  "will" + its verb, an adjective + its noun, a number + its unit, a person's or place's name.
+- Prefer breaking before "and", "but", "because", "with", "to" and similar words, not after them.
+- Avoid one-word lines.
+- Reply with the re-cut script only: no numbering, no timestamps, no commentary.
+
+Script:
+"""
+
+
+def llm_prompt(lines: list, s: Settings) -> str:
+    """A prompt the user can paste into any AI tool. The app itself never calls one."""
+    mw = f" and at most {s.max_words} words" if s.max_words and s.max_words > 0 else ""
+    return LLM_PROMPT.format(max_chars=s.max_chars, max_words=mw) + "\n".join(lines) + "\n"
+
+
+def compare_words(script_lines: list, new_lines: list) -> list:
+    """-> list of human-readable differences between two versions of the script's words
+    (empty = same words in the same order, only the line breaks differ)."""
+    a = " ".join(script_lines).split()
+    b_pos = [(li, w) for li, ln in enumerate(new_lines) for w in ln.split()]
+    b = [w for _li, w in b_pos]
+    if a == b:
+        return []
+    out = []
+    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    for op, i1, i2, j1, j2 in sm.get_opcodes():
+        if op == "equal":
+            continue
+        where = f" (your line {b_pos[min(j1, len(b) - 1)][0] + 1})" if b else ""
+        old, new = " ".join(a[i1:i2]), " ".join(b[j1:j2])
+        if op == "replace":
+            out.append(f'changed "{old}" to "{new}"{where}')
+        elif op == "delete":
+            out.append(f'dropped "{old}"{where}')
+        else:
+            out.append(f'added "{new}"{where}')
+    return out
+
+
+def check_line_breaks(raw_script: str, line_breaks: str, s: Settings) -> list:
+    """Validate a re-cut version of the script. Returns its lines; raises SyncError listing
+    every word that was changed, added or dropped (the subtitles must stay the writer's text)."""
+    s1 = replace(s, keep_script_lines=True)
+    new_lines = parse_script(line_breaks, s1)
+    if not new_lines:
+        raise SyncError("Your line breaks are empty.")
+    diffs = compare_words(parse_script(raw_script, s1), new_lines)
+    if diffs:
+        more = f"\n... and {len(diffs) - 8} more" if len(diffs) > 8 else ""
+        raise SyncError("Your line breaks don't match the script's words, so they weren't used "
+                        "(the subtitles must stay the writer's text exactly):\n- "
+                        + "\n- ".join(diffs[:8]) + more)
+    return new_lines
 
 
 def make_report(job_label: str, script_label: str, res: SyncResult, s: Settings,
@@ -770,11 +940,35 @@ def vocab_hint(lines: list, limit: int = 40) -> str:
     return ", ".join(out)
 
 
+def default_model_dir() -> str:
+    """Where speech models go when no folder is chosen (the Hugging Face cache faster-whisper uses)."""
+    if os.environ.get("HF_HUB_CACHE"):
+        return os.environ["HF_HUB_CACHE"]
+    home = os.environ.get("HF_HOME") or os.path.join(
+        os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache"), "huggingface")
+    return os.path.join(home, "hub")
+
+
+def check_model_dir(path: str) -> str:
+    """Make sure a chosen model folder exists and can be written to. Returns the absolute path."""
+    path = os.path.abspath(os.path.expanduser(path.strip()))
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".scriptsync_write_test")
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+    except OSError as e:
+        raise SyncError(f"Can't use '{path}' for the speech models: {e.strerror or e}. "
+                        "Choose another folder in More options, or clear it to use the default.")
+    return path
+
+
 _model_cache: dict = {}
 
 
-def _load_whisper(model: str, device: str, progress):
-    key = (model, device)
+def _load_whisper(model: str, device: str, progress, model_dir: str = ""):
+    key = (model, device, model_dir)
     if key in _model_cache:
         return _model_cache[key]
     try:
@@ -782,9 +976,11 @@ def _load_whisper(model: str, device: str, progress):
     except ImportError:
         raise SyncError("The speech engine (faster-whisper) isn't installed. "
                         "Run the launcher again or: pip install faster-whisper")
-    progress(0.02, f"Loading speech model '{model}' (first time downloads it - this can take a few minutes)")
+    where = model_dir or default_model_dir()
+    progress(0.02, f"Loading speech model '{model}' from {where} "
+                   "(first time downloads it - this can take a few minutes)")
     ctype = "int8" if device == "cpu" else "float16"
-    m = WhisperModel(model, device=device, compute_type=ctype)
+    m = WhisperModel(model, device=device, compute_type=ctype, download_root=model_dir or None)
     _model_cache[key] = m
     return m
 
@@ -827,8 +1023,10 @@ def _whisper_transcribe(path, s: Settings, hint: str, progress, cancel):
     progress(0.01, "Reading the audio")
     audio = decode_audio(path)
 
+    model_dir = check_model_dir(s.model_dir) if s.model_dir.strip() else ""
+
     def run(device):
-        model = _load_whisper(s.model, device, progress)
+        model = _load_whisper(s.model, device, progress, model_dir)
         progress(0.10, "Listening to the clip")
         segs, info = model.transcribe(
             audio, language=None if s.language == "auto" else s.language,
@@ -855,7 +1053,7 @@ def _whisper_transcribe(path, s: Settings, hint: str, progress, cancel):
         if dev == "cpu":
             raise
         # GPU libraries missing/unusable -> retry on CPU
-        _model_cache.pop((s.model, dev), None)
+        _model_cache.pop((s.model, dev, model_dir), None)
         progress(0.05, f"GPU not usable ({type(e).__name__}); using CPU")
         return run("cpu")
 
@@ -909,7 +1107,7 @@ def sync_words(lines: list, asr: list, duration: float, s: Settings) -> SyncResu
     words, off = align_script(lines, asr, duration)
     if not duration:
         duration = max(w.end for w in asr)
-    cues, skipped = build_cues(words, lines, s, duration)
+    cues, skipped, layout = build_cues(words, lines, s, duration)
     heard = sum(1 for w in words if w.anchored and w.conf >= 0.85) / max(len(words), 1)
     pct = 100.0 * sum(w.conf for w in words) / max(len(words), 1)
     warnings = []
@@ -919,7 +1117,7 @@ def sync_words(lines: list, asr: list, duration: float, s: Settings) -> SyncResu
     res = SyncResult(
         cues=cues, skipped=skipped, off_script=off, warnings=warnings, match_pct=pct,
         n_ok=sum(c.level == "ok" for c in cues), n_check=sum(c.level == "check" for c in cues),
-        n_bad=sum(c.level == "bad" for c in cues), duration=duration)
+        n_bad=sum(c.level == "bad" for c in cues), duration=duration, words=words, layout=layout)
     res.srt_text = make_srt(cues)
     return res
 
@@ -939,11 +1137,23 @@ def run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> Sy
     lines = parse_script(raw, s)
     if not lines:
         raise SyncError("The script is empty after cleaning (is everything in [brackets]?).")
-    asr, dur, lang = transcribe(job.video, s, lines, progress, cancel)
+    hint_lines = lines              # the speech model's hint (and so its saved transcript) stays the same
+    s_cues = s
+    if job.line_breaks and job.line_breaks.strip():
+        lines = check_line_breaks(raw, job.line_breaks, s)
+        script_label += f" + your line breaks ({len(lines)} lines)"
+        # each of the user's lines becomes exactly one cue
+        s_cues = replace(s, keep_script_lines=True, max_chars=10 ** 6, max_cue_seconds=10 ** 6, max_words=0)
+    asr, dur, lang = transcribe(job.video, s, hint_lines, progress, cancel)
     if cancel and cancel.is_set():
         raise Cancelled()
     progress(0.88, "Matching the script to the audio")
-    res = sync_words(lines, asr, dur, s)
+    res = sync_words(lines, asr, dur, s_cues)
+    if s_cues is not s:
+        long_lines = sum(1 for ln in lines if len(ln) > s.max_chars)
+        if long_lines:
+            res.warnings.append(f"{long_lines} of your lines are longer than {s.max_chars} characters "
+                                "(kept as you wrote them).")
     n_words = sum(len(l.split()) for l in lines)
     res.report_text = make_report(job.label(), script_label, res, s, len(lines), n_words,
                                   lang or s.language)
@@ -958,6 +1168,13 @@ def run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> Sy
             f.write(res.srt_text)
         with open(res.report_path, "w", encoding="utf-8", newline="") as f:
             f.write(res.report_text)
+        if s.export_words:
+            res.words_json_path = os.path.join(out_dir, stem + ".words.json")
+            res.words_srt_path = os.path.join(out_dir, stem + ".words.srt")
+            with open(res.words_json_path, "w", encoding="utf-8", newline="") as f:
+                f.write(make_words_json(res.words))
+            with open(res.words_srt_path, "w", encoding="utf-8", newline="") as f:
+                f.write(make_words_srt(res.words, s))
     except OSError as e:
         raise SyncError(f"Couldn't save to '{out_dir}': {e.strerror or e}")
     progress(1.0, "Done")
@@ -979,7 +1196,7 @@ def find_script_for(video: str) -> Optional[str]:
         fs, ext = os.path.splitext(f)
         if ext.lower() not in SCRIPT_EXTS or f.startswith("~$"):
             continue
-        if f.lower().endswith((".synced.srt",)):
+        if f.lower().endswith((".synced.srt", ".words.srt")):
             continue
         if fs.lower() == stem:
             cands.append((0, SCRIPT_EXTS.index(ext.lower()), f))
@@ -1015,21 +1232,42 @@ def main(argv=None):
     ap.add_argument("--max-chars", type=int, default=40)
     ap.add_argument("--fps", type=float, default=30.0,
                     help="snap subtitle times to whole frames at this frame rate (0 = don't snap)")
+    ap.add_argument("--model-dir", default=os.environ.get("SCRIPTSYNC_MODEL_DIR", ""),
+                    help="folder for the speech model files (default: the shared Hugging Face cache, "
+                         "or $SCRIPTSYNC_MODEL_DIR)")
+    ap.add_argument("--max-words", type=int, default=0, help="max words per subtitle (0 = no limit)")
+    ap.add_argument("--words", action="store_true",
+                    help="also write <clip>.words.json and <clip>.words.srt (every word with its time)")
+    ap.add_argument("--line-breaks", metavar="FILE",
+                    help="the same script re-cut into subtitle lines (e.g. by an AI tool): one cue per line")
+    ap.add_argument("--print-prompt", action="store_true",
+                    help="print a prompt for re-cutting this script in an AI tool of your choice, then exit")
     ap.add_argument("--no-cache", action="store_true")
     a = ap.parse_args(argv)
     s = Settings(model=a.model, language=a.language, max_chars=a.max_chars, use_cache=not a.no_cache,
-                 fps=a.fps)
+                 fps=a.fps, model_dir=a.model_dir, max_words=a.max_words, export_words=a.words)
+    if a.print_prompt:
+        try:
+            print(llm_prompt(parse_script(read_script_file(a.script), s), s))
+        except (OSError, SyncError) as e:
+            print("Error:", e, file=sys.stderr)
+            return 1
+        return 0
 
     def prog(f, m):
         print(f"[{int(f * 100):3d}%] {m}", file=sys.stderr)
 
     try:
-        res = run_job(Job(a.video, a.script, None, a.out), s, prog)
-    except SyncError as e:
+        lb = read_script_file(a.line_breaks) if a.line_breaks else None
+        res = run_job(Job(a.video, a.script, None, a.out, line_breaks=lb), s, prog)
+    except (SyncError, OSError) as e:
         print("Error:", e, file=sys.stderr)
         return 1
     print(res.srt_path)
     print(res.report_path)
+    if res.words_json_path:
+        print(res.words_json_path)
+        print(res.words_srt_path)
     print(f"{len(res.cues)} cues: {res.n_ok} OK, {res.n_check} CHECK, {res.n_bad} BAD")
     return 0
 
