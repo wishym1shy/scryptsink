@@ -121,6 +121,17 @@ class PasteDialog(tk.Toplevel):
         self.destroy()
 
 
+class LineBreaksDialog(PasteDialog):
+    """Same window as Paste script, with its own instructions."""
+
+    def __init__(self, parent, title, initial, prompt):
+        super().__init__(parent, title, initial)
+        for w in self.winfo_children():
+            if isinstance(w, ttk.Label):
+                w.configure(text=prompt, wraplength=560, justify="left")
+                break
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -209,15 +220,19 @@ class App(tk.Tk):
         ttk.Label(r1, text="Listening quality").grid(row=0, column=0, sticky="w")
         self.var_model = tk.StringVar(value=list(MODELS)[1])
         ttk.Combobox(r1, textvariable=self.var_model, values=list(MODELS), state="readonly",
-                     width=32).grid(row=0, column=1, padx=(8, 22), sticky="w")
+                     width=30).grid(row=0, column=1, padx=(8, 16), sticky="w")
         ttk.Label(r1, text="Language").grid(row=0, column=2, sticky="w")
         self.var_lang = tk.StringVar(value="Auto-detect")
         ttk.Combobox(r1, textvariable=self.var_lang, values=list(LANGS), state="readonly",
-                     width=18).grid(row=0, column=3, padx=(8, 22), sticky="w")
-        ttk.Label(r1, text="Max characters per subtitle").grid(row=0, column=4, sticky="w")
+                     width=16).grid(row=0, column=3, padx=(8, 16), sticky="w")
+        ttk.Label(r1, text="Max characters").grid(row=0, column=4, sticky="w")
         self.var_maxchars = tk.IntVar(value=40)
         ttk.Spinbox(r1, from_=12, to=120, textvariable=self.var_maxchars, width=5).grid(
             row=0, column=5, padx=8, sticky="w")
+        ttk.Label(r1, text="Max words").grid(row=0, column=6, sticky="w", padx=(6, 0))
+        self.var_maxwords = tk.IntVar(value=0)
+        ttk.Spinbox(r1, from_=0, to=20, textvariable=self.var_maxwords, width=4).grid(
+            row=0, column=7, padx=8, sticky="w")
 
         r2 = ttk.Frame(sf)
         r2.pack(fill="x", pady=(10, 0))
@@ -239,6 +254,7 @@ class App(tk.Tk):
         self.v_prime = tk.BooleanVar(value=True)
         self.v_unheard = tk.BooleanVar(value=False)
         self.v_cache = tk.BooleanVar(value=True)
+        self.v_words = tk.BooleanVar(value=False)
         self.v_mincue = tk.DoubleVar(value=0.8)
         self.v_bridge = tk.DoubleVar(value=0.4)
         self.v_maxsec = tk.DoubleVar(value=5.0)
@@ -251,6 +267,7 @@ class App(tk.Tk):
             (self.v_prime, "Tell the listener the names/brands in the script (helps spelling)"),
             (self.v_unheard, "Also include lines that were never heard (timing is a guess)"),
             (self.v_cache, "Re-use the saved transcript if the clip hasn't changed (faster)"),
+            (self.v_words, "Also save every word's timing (.words.json / .words.srt) for other tools"),
         ]
         for i, (v, txt) in enumerate(opts):
             ttk.Checkbutton(self.adv, text=txt, variable=v).grid(row=i // 2, column=i % 2, sticky="w",
@@ -303,6 +320,12 @@ class App(tk.Tk):
         self.btn_rep.pack(side="right")
         self.btn_srt = ttk.Button(top, text="Show .srt in folder", command=self.open_srt, state="disabled")
         self.btn_srt.pack(side="right", padx=6)
+        self.btn_breaks = ttk.Button(top, text="Apply line breaks\u2026", command=self.apply_line_breaks,
+                                     state="disabled")
+        self.btn_breaks.pack(side="right", padx=(6, 0))
+        self.btn_prompt = ttk.Button(top, text="Copy AI prompt", command=self.copy_prompt,
+                                     state="disabled")
+        self.btn_prompt.pack(side="right")
 
         self.extra = ttk.Label(vf, style="Sub.TLabel", wraplength=1000, justify="left")
         self.extra.pack(side="bottom", anchor="w", pady=(6, 0))
@@ -351,6 +374,8 @@ class App(tk.Tk):
             sc = os.path.basename(job.script_path)
         else:
             sc = "⚠ none yet - choose or paste one"
+        if job.line_breaks and (job.script_text or job.script_path):
+            sc += "  + your line breaks"
         st = e["status"] or ("Ready" if (job.script_text or job.script_path) else "Needs a script")
         tag = ""
         if not (job.script_text or job.script_path):
@@ -404,7 +429,7 @@ class App(tk.Tk):
             title="Choose the writer's script",
             filetypes=[("Scripts", "*.docx *.txt *.md *.srt"), ("All files", "*.*")])
         if p:
-            e["job"].script_path, e["job"].script_text = p, None
+            e["job"].script_path, e["job"].script_text, e["job"].line_breaks = p, None, None
             e["result"] = None
             self._refresh_row(e, status="")
             self._after_add()
@@ -417,7 +442,7 @@ class App(tk.Tk):
         dlg = PasteDialog(self, f"Script for {e['job'].label()}", e["job"].script_text or "")
         self.wait_window(dlg)
         if dlg.result:
-            e["job"].script_text, e["job"].script_path = dlg.result, None
+            e["job"].script_text, e["job"].script_path, e["job"].line_breaks = dlg.result, None, None
             e["result"] = None
             self._refresh_row(e, status="")
             self._after_add()
@@ -458,6 +483,10 @@ class App(tk.Tk):
             maxc = max(10, int(self.var_maxchars.get()))
         except (tk.TclError, ValueError):
             maxc = 40
+        try:
+            maxw = max(0, int(self.var_maxwords.get()))
+        except (tk.TclError, ValueError):
+            maxw = 0
 
         def num(v, d):
             try:
@@ -468,6 +497,8 @@ class App(tk.Tk):
             model=MODELS.get(self.var_model.get(), "small"),
             language=LANGS.get(self.var_lang.get(), "auto"),
             max_chars=maxc,
+            max_words=maxw,
+            export_words=self.v_words.get(),
             max_cue_seconds=num(self.v_maxsec, 5.0),
             min_cue_seconds=num(self.v_mincue, 0.8),
             bridge_gap=num(self.v_bridge, 0.4),
@@ -488,7 +519,8 @@ class App(tk.Tk):
                 "lines": self.v_lines.get(), "zero": self.v_zero.get(), "prime": self.v_prime.get(),
                 "unheard": self.v_unheard.get(), "cache": self.v_cache.get(),
                 "mincue": self.v_mincue.get(), "bridge": self.v_bridge.get(), "maxsec": self.v_maxsec.get(),
-                "fps": self.v_fps.get(), "modeldir": self.v_modeldir.get()}
+                "fps": self.v_fps.get(), "modeldir": self.v_modeldir.get(),
+                "maxwords": self.var_maxwords.get(), "words": self.v_words.get()}
         try:
             json.dump(data, open(settings_path(), "w"))
         except Exception:
@@ -506,9 +538,10 @@ class App(tk.Tk):
                 self.var_lang.set(d["lang"])
             self.var_maxchars.set(int(d.get("maxc", 40)))
             self.var_out.set(d.get("out", ""))
+            self.var_maxwords.set(int(d.get("maxwords", 0)))
             for k, v in (("brackets", self.v_brackets), ("labels", self.v_labels), ("lines", self.v_lines),
                          ("zero", self.v_zero), ("prime", self.v_prime), ("unheard", self.v_unheard),
-                         ("cache", self.v_cache)):
+                         ("cache", self.v_cache), ("words", self.v_words)):
                 if k in d:
                     v.set(bool(d[k]))
             if d.get("fps") in FRAME_RATES:
@@ -535,7 +568,9 @@ class App(tk.Tk):
         if not todo:
             messagebox.showinfo("Scripts needed", "None of the clips has a script yet.")
             return
-        s = self.current_settings()
+        self._run(todo, self.current_settings())
+
+    def _run(self, todo, s):
         out = self.var_out.get().strip() or None
         for e in todo:
             e["job"].out_dir = out
@@ -620,8 +655,8 @@ class App(tk.Tk):
         self.ctree.delete(*self.ctree.get_children())
         self.summary.config(text="Select a finished clip to see its subtitles.")
         self.extra.config(text="")
-        self.btn_rep.config(state="disabled")
-        self.btn_srt.config(state="disabled")
+        for b in (self.btn_rep, self.btn_srt, self.btn_breaks, self.btn_prompt):
+            b.config(state="disabled")
 
     def show_selected(self):
         e = self._selected()
@@ -651,17 +686,74 @@ class App(tk.Tk):
             bits.append(f"Spoken but not in script ({len(r.off_script)}): " + "  •  ".join(
                 f"{core.short_tc(a)} \"{t[:40]}\"" for a, _b, t in r.off_script[:3]))
         self.extra.config(text="\n".join(bits))
-        self.btn_rep.config(state="normal")
-        self.btn_srt.config(state="normal")
+        for b in (self.btn_rep, self.btn_srt, self.btn_breaks, self.btn_prompt):
+            b.config(state="normal")
+        if r.words_json_path:
+            bits.append(f"Word timings saved: {os.path.basename(r.words_json_path)}, "
+                        f"{os.path.basename(r.words_srt_path)}")
+            self.extra.config(text="\n".join(bits))
+
+    def _result_entry(self):
+        e = self._selected() or next((x for x in self.entries.values() if x["result"]), None)
+        return e if e and e["result"] else None
+
+    def _script_raw(self, job):
+        if job.script_text and job.script_text.strip():
+            return job.script_text
+        return core.read_script_file(job.script_path)
+
+    def copy_prompt(self):
+        """Put a ready-made prompt + this clip's script on the clipboard for any AI tool.
+        The app itself never calls an AI service and needs no API key."""
+        e = self._result_entry()
+        if not e:
+            return
+        s = self.current_settings()
+        try:
+            lines = core.parse_script(self._script_raw(e["job"]), s)
+        except (OSError, core.SyncError) as ex:
+            messagebox.showerror("Couldn't read the script", str(ex))
+            return
+        self.clipboard_clear()
+        self.clipboard_append(core.llm_prompt(lines, s))
+        messagebox.showinfo("Prompt copied", (
+            "A prompt with this clip's script is on the clipboard.\n\n"
+            "1. Paste it into the AI tool you already use.\n"
+            "2. Copy its answer (the script with new line breaks).\n"
+            "3. Click 'Apply line breaks…' and paste it there.\n\n"
+            "Script Sync checks that no words were changed and re-times it from the saved transcript."))
+
+    def apply_line_breaks(self):
+        e = self._result_entry()
+        if not e or self._busy():
+            return
+        r = e["result"]
+        initial = e["job"].line_breaks or "\n".join(r.layout)
+        dlg = LineBreaksDialog(self, f"Line breaks for {e['job'].label()}", initial, (
+            "One subtitle per line. Move the line breaks here, or paste the script re-cut by an AI tool. "
+            "Only the breaks may change: every word and punctuation mark must stay as written. "
+            "Leave it empty to go back to automatic cuts."))
+        self.wait_window(dlg)
+        if dlg.result is None:
+            return
+        s = self.current_settings()
+        if dlg.result:
+            try:
+                core.check_line_breaks(self._script_raw(e["job"]), dlg.result, s)
+            except (OSError, core.SyncError) as ex:
+                messagebox.showerror("Line breaks not applied", str(ex))
+                return
+        e["job"].line_breaks = dlg.result or None
+        self._run([e], s)
 
     def open_report(self):
-        e = self._selected() or next((x for x in self.entries.values() if x["result"]), None)
-        if e and e["result"]:
+        e = self._result_entry()
+        if e:
             open_path(e["result"].report_path)
 
     def open_srt(self):
-        e = self._selected() or next((x for x in self.entries.values() if x["result"]), None)
-        if e and e["result"]:
+        e = self._result_entry()
+        if e:
             reveal(e["result"].srt_path)
 
     def _on_close(self):

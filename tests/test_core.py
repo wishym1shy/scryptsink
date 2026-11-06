@@ -1,4 +1,4 @@
-import os, sys, re
+import os, sys, re, json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scriptsync_core import *
 
@@ -131,6 +131,125 @@ def test_frame_snapping():
             for t in (c.start, c.end):
                 assert abs(t * fps - round(t * fps)) < 1e-6, (fps, t)
             assert c.end > c.start
+
+
+def _cues(script, **kw):
+    s = Settings(**kw)
+    asr, _, end = speak([script])
+    return [c.text for c in sync_words(parse_script(script, s), asr, end, s).cues]
+
+
+def test_breath_cuts():
+    """Issue #7: cut where a speaker would breathe, not just by character count."""
+    cues = _cues("This turquoise ring is set in white gold bands. This turquoise one is the classic version, "
+                 "and it has been our best seller for over ten years.")
+    print(cues)
+    assert not any(re.search(r"[.!?]\s", c) for c in cues), "two sentences joined in one cue"
+    assert "in white gold bands." in cues or any(c.endswith("bands.") for c in cues)
+    glue = {"a", "an", "the", "of", "to", "in", "with", "will", "and", "my", "your"}
+    for script in ("We have the brand new Sorento with a three-row interior and it is honestly the best one we have.",
+                   "Book your appointment online in less than two minutes. We are open seven days a week, and "
+                   "walk-ins are always welcome at both of our locations.",
+                   "Our team will walk you through every step of the process. From the first phone call to the "
+                   "day we hand you the keys, you will always know what comes next."):
+        cues = _cues(script)
+        print(cues)
+        assert all(len(c) <= 40 for c in cues)
+        assert not any(re.search(r"[.!?]\s", c) for c in cues)
+        assert not any(c.split()[-1].lower() in glue for c in cues[:-1]), cues
+        assert not any(len(c.split()) == 1 for c in cues), cues
+
+
+def test_pause_is_a_breath():
+    """With no punctuation to go on, the cut lands on the speaker's pause."""
+    asr, _, end = speak(["so this is the part where", "everyone gets really excited about it"], pause=0.8)
+    s = Settings(max_chars=40)
+    res = sync_words(["so this is the part where everyone gets really excited about it"], asr, end, s)
+    assert [c.text for c in res.cues] == ["so this is the part where", "everyone gets really excited about it"], \
+        [c.text for c in res.cues]
+
+
+def test_max_words():
+    cues = _cues("Welcome back to the channel. Today I will show you three simple ways to keep plants alive.",
+                 max_words=4)
+    print(cues)
+    assert all(len(c.split()) <= 4 for c in cues)
+
+
+def test_words_export():
+    script = "Hello there friends.\nThis line is never said."
+    asr, _, end = speak(["hello there friends"])
+    s = Settings()
+    res = sync_words(parse_script(script, s), asr, end, s)
+    data = json.loads(make_words_json(res.words))
+    assert [d["word"] for d in data] == "Hello there friends. This line is never said.".split()
+    assert data[2]["word"] == "friends." and data[2]["heard"] and data[2]["line"] == 1
+    assert not data[3]["heard"] and data[3]["line"] == 2
+    assert all(d["start"] <= d["end"] for d in data)
+    srt = make_words_srt(res.words, s)
+    assert srt.count("-->") == 3 and "friends." in srt and "never" not in srt   # unheard words left out
+
+
+def test_line_breaks_check():
+    s = Settings()
+    script = "Hello there friends, welcome to the show.\nToday we cook pasta."
+    lines = check_line_breaks(script, "Hello there friends,\nwelcome to the show.\nToday we cook pasta.", s)
+    assert lines == ["Hello there friends,", "welcome to the show.", "Today we cook pasta."]
+    try:
+        check_line_breaks(script, "Hello there friends,\nwelcome to our show!\nToday we cook pasta.", s)
+        assert False, "changed words must be rejected"
+    except SyncError as e:
+        msg = str(e); print(msg)
+        assert '"the show." to "our show!"' in msg and "your line 2" in msg
+    try:
+        check_line_breaks(script, "Hello friends,\nwelcome to the show.\nToday we cook pasta. Enjoy!", s)
+        assert False
+    except SyncError as e:
+        assert 'dropped "there"' in str(e) and 'added "Enjoy!"' in str(e), e
+
+
+def test_line_breaks_run_job_reuses_transcript():
+    """Re-cut import: one cue per user line, timings from the saved transcript (no new listening pass)."""
+    import tempfile
+    d = tempfile.mkdtemp()
+    clip = os.path.join(d, "clip.mp4"); open(clip, "wb").write(b"not really a video")
+    calls = os.path.join(d, "calls.txt")
+    plugin = os.path.join(d, "plugin.py")
+    open(plugin, "w").write(
+        "import os\n"
+        "def transcribe(path, language, hint, progress, cancel):\n"
+        f"    open({calls!r}, 'a').write('x')\n"
+        "    words, t = [], 0.5\n"
+        "    for w in 'hello there friends welcome to the show today we cook pasta'.split():\n"
+        "        words.append((w, t, t + 0.3, 0.9)); t += 0.35\n"
+        "    return words, t + 0.5, 'en'\n")
+    old_env = {k: os.environ.get(k) for k in ("SCRIPTSYNC_ASR_PLUGIN", "LOCALAPPDATA")}
+    os.environ["SCRIPTSYNC_ASR_PLUGIN"] = plugin
+    os.environ["LOCALAPPDATA"] = d
+    try:
+        script = "Hello there friends, welcome to the show. Today we cook pasta."
+        s = Settings(export_words=True)
+        res1 = run_job(Job(clip, script_text=script), s)
+        breaks = "Hello there friends,\nwelcome to the show.\nToday we cook pasta."
+        res2 = run_job(Job(clip, script_text=script, line_breaks=breaks), s)
+        assert [c.text for c in res2.cues] == breaks.split("\n"), [c.text for c in res2.cues]
+        assert open(calls).read() == "x", "the second run must reuse the saved transcript"
+        assert os.path.exists(res2.words_json_path) and os.path.exists(res2.words_srt_path)
+        assert "your line breaks" in res2.report_text
+        try:
+            run_job(Job(clip, script_text=script, line_breaks="Hello friends,\nwelcome."), s); assert False
+        except SyncError as e:
+            assert "don't match" in str(e)
+    finally:
+        for k, v in old_env.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+
+
+def test_llm_prompt_has_rules_and_script():
+    p = llm_prompt(["Hello there.", "Second line"], Settings(max_chars=32, max_words=4))
+    assert "32 characters" in p and "4 words" in p and p.rstrip().endswith("Hello there.\nSecond line")
+    assert "Do NOT change" in p
 
 
 def test_decode_audio_without_pyav():
