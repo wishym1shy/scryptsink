@@ -77,7 +77,8 @@ class Settings:
     bridge_gap: float = 0.4         # keep a cue up through pauses shorter than this
     tail_hold: float = 0.12         # linger after the last word
     lead_in: float = 0.0            # show cue this much earlier than the first word
-    min_gap: float = 0.04           # clear space between consecutive cues
+    min_gap: float = 0.1            # a gap shorter than this between cues is closed (it reads as a blink)
+    fps: float = 30.0               # snap cue times to whole frames at this rate (0 = don't snap)
     premiere_zero_fix: bool = True  # Premiere quirk: it drops a cue that starts at 00:00:00,000
     include_unheard: bool = False   # keep cues for text that was never heard (timing = guess)
 
@@ -618,25 +619,40 @@ def build_cues(words: list, lines: list, s: Settings, audio_duration: float):
     return cues, skipped
 
 
+def _snap(t: float, fps: float) -> float:
+    return round(t * fps) / fps if fps and fps > 0 else t
+
+
 def _finalize_times(cues: list, s: Settings, duration: float):
+    """Decide when each cue appears and disappears.
+
+    Consecutive cues either touch (previous end == next start) or are separated by a real,
+    visible gap of at least ``min_gap``. Anything in between would show as a blank frame or
+    two, so the subtitles would blink at every cue change.
+    """
     n = len(cues)
-    for i, c in enumerate(cues):
-        c.start = max(0.0, c.start - s.lead_in)
+    frame = 1.0 / s.fps if s.fps and s.fps > 0 else 0.0
+    for c in cues:
+        c.start = _snap(max(0.0, c.start - s.lead_in), s.fps)
     for i, c in enumerate(cues):
         nxt = cues[i + 1].start if i + 1 < n else None
-        end = c.end
-        limit = (nxt - s.min_gap) if nxt is not None else float("inf")
         if nxt is not None and nxt - c.end <= s.bridge_gap:
-            end = max(end, limit)                         # hold through short pauses
+            end = nxt                                     # hold through short pauses: touch the next cue
         else:
             end = c.end + s.tail_hold
-        if end - c.start < s.min_cue_seconds:
-            end = c.start + s.min_cue_seconds
-        end = min(end, limit)
+            if end - c.start < s.min_cue_seconds:
+                end = c.start + s.min_cue_seconds
+            if nxt is not None:
+                end = min(end, nxt)
+                if nxt - end < s.min_gap:                 # a sliver of a gap would blink: close it
+                    end = nxt
         if duration and nxt is None:
             end = min(end, duration)
-        if end < c.start + 0.05:
-            end = c.start + 0.05
+        end = _snap(end, s.fps)
+        if end < c.start + max(0.05, frame):
+            end = c.start + max(0.05, frame)
+            if nxt is not None and end > nxt:             # crowded cues: never overlap the next one
+                end = max(nxt, c.start)
         c.end = end
     if s.premiere_zero_fix and cues and cues[0].start < 0.067:
         cues[0].start = 0.067
@@ -997,9 +1013,12 @@ def main(argv=None):
     ap.add_argument("--model", default="small")
     ap.add_argument("--language", default="auto")
     ap.add_argument("--max-chars", type=int, default=40)
+    ap.add_argument("--fps", type=float, default=30.0,
+                    help="snap subtitle times to whole frames at this frame rate (0 = don't snap)")
     ap.add_argument("--no-cache", action="store_true")
     a = ap.parse_args(argv)
-    s = Settings(model=a.model, language=a.language, max_chars=a.max_chars, use_cache=not a.no_cache)
+    s = Settings(model=a.model, language=a.language, max_chars=a.max_chars, use_cache=not a.no_cache,
+                 fps=a.fps)
 
     def prog(f, m):
         print(f"[{int(f * 100):3d}%] {m}", file=sys.stderr)

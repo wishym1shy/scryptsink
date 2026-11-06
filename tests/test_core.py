@@ -91,6 +91,47 @@ def test_big_alignment_speed():
 
 
 
+def test_continuous_speech_cues_touch():
+    """Issue #6: cues in one continuous run of speech must touch; a 1-frame gap reads as a blink."""
+    script = "This is a really long sentence, which should be split into several balanced cues so we can see the gaps."
+    asr, truth, end = speak([script])
+    for fps in (30.0, 25.0, 24000 / 1001, 0.0):
+        s = Settings(fps=fps)
+        res = sync_words(parse_script(script, s), asr, end, s)
+        assert len(res.cues) >= 3
+        for a, b in zip(res.cues, res.cues[1:]):
+            assert srt_time(a.end) == srt_time(b.start), (fps, a, b)
+        assert "-->" in res.srt_text
+
+
+def test_real_pause_keeps_gap_and_no_slivers():
+    """A pause longer than bridge_gap stays a visible gap; no gap anywhere is shorter than min_gap."""
+    asr, truth, end = speak(["Hello there friends", "Second line after a pause", "Third", "Fourth one"],
+                            pause=1.2)
+    s = Settings()
+    res = sync_words(parse_script("Hello there friends\nSecond line after a pause\nThird\nFourth one", s),
+                     asr, end, s)
+    gaps = [b.start - a.end for a, b in zip(res.cues, res.cues[1:])]
+    assert gaps[0] > 0.5, gaps
+    assert all(g == 0 or g >= s.min_gap - 1e-9 for g in gaps), gaps
+    # min-duration stretch of a short cue right before the next one must not leave a sliver either
+    asr = [AsrWord("Hi", 1.0, 1.2), AsrWord("there", 1.95, 2.3)]
+    s = Settings(bridge_gap=0.4, min_cue_seconds=0.8)
+    res = sync_words(["Hi", "there"], asr, 3.0, s)
+    g = res.cues[1].start - res.cues[0].end
+    assert g == 0 or g >= s.min_gap - 1e-9, g
+
+
+def test_frame_snapping():
+    asr, truth, end = speak(["one two three four five six seven", "eight nine ten"], pause=0.9)
+    for fps in (24.0, 25.0, 30.0):
+        s = Settings(fps=fps, premiere_zero_fix=False)
+        res = sync_words(["one two three four five six seven", "eight nine ten"], asr, end, s)
+        for c in res.cues:
+            for t in (c.start, c.end):
+                assert abs(t * fps - round(t * fps)) < 1e-6, (fps, t)
+            assert c.end > c.start
+
 
 def test_decode_audio_without_pyav():
     """Regression: faster-whisper's own loader calls av.open(metadata_errors=...), which crashes on older
