@@ -80,7 +80,8 @@ class Settings:
     tail_hold: float = 0.12         # linger after the last word
     lead_in: float = 0.0            # show cue this much earlier than the first word
     min_gap: float = 0.1            # a gap shorter than this between cues is closed (it reads as a blink)
-    fps: float = 30.0               # snap cue times to whole frames at this rate (0 = don't snap)
+    fps: float = 30.0               # frame rate for clips that have none (audio files) or when not matching clips
+    match_clip_fps: bool = True     # snap to each clip's own frame rate (read from the video) when it has one
     premiere_zero_fix: bool = True  # Premiere quirk: it drops a cue that starts at 00:00:00,000
     include_unheard: bool = False   # keep cues for text that was never heard (timing = guess)
     export_words: bool = False      # also write <clip>.words.json and <clip>.words.srt (one word per cue)
@@ -120,6 +121,7 @@ class Job:
     script_text: Optional[str] = None
     out_dir: Optional[str] = None
     line_breaks: Optional[str] = None   # the same script re-cut by the user / an outside tool: one cue per line
+    fps: Optional[float] = None         # this clip's frame rate: None = automatic, 0 = don't snap
 
     def label(self):
         return os.path.basename(self.video)
@@ -145,6 +147,8 @@ class SyncResult:
     layout: list = field(default_factory=list)     # every cue's text in script order, incl. never-heard ones
     words_json_path: str = ""
     words_srt_path: str = ""
+    fps: float = 0.0                               # frame rate the cue times were snapped to (0 = none)
+    fps_source: str = ""                           # where that frame rate came from
 
 
 class Cancelled(Exception):
@@ -863,6 +867,8 @@ def make_report(job_label: str, script_label: str, res: SyncResult, s: Settings,
     L.append(f"Clip:    {job_label}")
     L.append(f"Script:  {script_label}  ({n_lines} lines, {n_words} words)")
     L.append(f"Made:    {time.strftime('%Y-%m-%d %H:%M')}  |  model {s.model}  |  language {lang}")
+    if res.fps_source:
+        L.append(f"Frames:  {fps_name(res.fps)}  ({res.fps_source})")
     L.append(f"Heard:   {res.match_pct:.0f}% of the script's words were found in the audio")
     L.append(f"Cues:    {len(res.cues)} total  =  {res.n_ok} OK, {res.n_check} CHECK, {res.n_bad} BAD")
     L.append("")
@@ -1010,6 +1016,69 @@ def decode_audio(path: str):
     return np.frombuffer(p.stdout, dtype=np.float32)
 
 
+_FPS_RE = re.compile(r"Stream #[^\n]*?Video:(?![^\n]*attached pic)[^\n]*?(\d+(?:\.\d+)?)(k?) fps")
+_STANDARD_FPS = (24000 / 1001, 24.0, 25.0, 30000 / 1001, 30.0, 48.0, 50.0, 60000 / 1001, 60.0)
+_fps_cache: dict = {}
+
+
+def _normalize_fps(f: float) -> float:
+    """ffmpeg prints rounded rates (23.98, 29.97): map them back to the exact standard rate."""
+    for std in _STANDARD_FPS:
+        if abs(f - std) < 0.05:          # also catches phone footage that reports e.g. 29.98 or 30.02
+            return std
+    return round(f, 3)
+
+
+def detect_fps(path: str) -> Optional[float]:
+    """A clip's frame rate, read with ffmpeg. None for audio-only files (cover art doesn't count)
+    or when it can't be read."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (os.path.abspath(path), st.st_size, int(st.st_mtime))
+    if key in _fps_cache:
+        return _fps_cache[key]
+    fps = None
+    ff = find_ffmpeg()
+    if ff:
+        kw = {"creationflags": 0x08000000} if os.name == "nt" else {}   # no console flash on Windows
+        try:
+            p = subprocess.run([ff, "-hide_banner", "-nostdin", "-i", path], capture_output=True,
+                               timeout=30, **kw)
+            m = _FPS_RE.search(p.stderr.decode("utf-8", "replace"))
+            if m:
+                f = float(m.group(1)) * (1000 if m.group(2) else 1)
+                if 1 <= f <= 1000:
+                    fps = _normalize_fps(f)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    _fps_cache[key] = fps
+    return fps
+
+
+def fps_name(fps: float) -> str:
+    """29.97002997 -> "29.97 fps", 0 -> "not snapped"."""
+    if not fps or fps <= 0:
+        return "not snapped"
+    for exact, name in ((24000 / 1001, "23.976"), (30000 / 1001, "29.97"), (60000 / 1001, "59.94")):
+        if abs(fps - exact) < 0.005:
+            return name + " fps"
+    return f"{fps:.3f}".rstrip("0").rstrip(".") + " fps"
+
+
+def clip_fps(job: Job, s: Settings):
+    """-> (frame rate to snap this clip's subtitles to, where it came from)."""
+    if job.fps is not None:
+        return max(job.fps, 0.0), "set for this clip"
+    if s.match_clip_fps:
+        f = detect_fps(job.video)
+        if f:
+            return f, "read from the clip"
+        return s.fps, "clip has no video; default used"
+    return s.fps, "default"
+
+
 def _auto_device() -> str:
     """Use an NVIDIA GPU when CTranslate2 can see one, otherwise the CPU."""
     try:
@@ -1126,6 +1195,8 @@ def run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> Sy
     progress = progress or (lambda f, m: None)
     if not os.path.exists(job.video):
         raise SyncError(f"Can't find the clip: {job.video}")
+    fps, fps_source = clip_fps(job, s)
+    s = replace(s, fps=fps)
     if job.script_text is not None and job.script_text.strip():
         raw, script_label = job.script_text, "(pasted text)"
     elif job.script_path:
@@ -1155,6 +1226,7 @@ def run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> Sy
             res.warnings.append(f"{long_lines} of your lines are longer than {s.max_chars} characters "
                                 "(kept as you wrote them).")
     n_words = sum(len(l.split()) for l in lines)
+    res.fps, res.fps_source = fps, fps_source
     res.report_text = make_report(job.label(), script_label, res, s, len(lines), n_words,
                                   lang or s.language)
     out_dir = job.out_dir or os.path.dirname(os.path.abspath(job.video))
@@ -1230,8 +1302,9 @@ def main(argv=None):
     ap.add_argument("--model", default="small")
     ap.add_argument("--language", default="auto")
     ap.add_argument("--max-chars", type=int, default=40)
-    ap.add_argument("--fps", type=float, default=30.0,
-                    help="snap subtitle times to whole frames at this frame rate (0 = don't snap)")
+    ap.add_argument("--fps", default="auto",
+                    help="frame rate to snap subtitle times to: 'auto' = the clip's own (default; 30 for "
+                         "audio-only files), a number such as 25 or 29.97, or 0 = don't snap")
     ap.add_argument("--model-dir", default=os.environ.get("SCRIPTSYNC_MODEL_DIR", ""),
                     help="folder for the speech model files (default: the shared Hugging Face cache, "
                          "or $SCRIPTSYNC_MODEL_DIR)")
@@ -1244,8 +1317,15 @@ def main(argv=None):
                     help="print a prompt for re-cutting this script in an AI tool of your choice, then exit")
     ap.add_argument("--no-cache", action="store_true")
     a = ap.parse_args(argv)
+    if a.fps.strip().lower() == "auto":
+        clip_rate = None
+    else:
+        try:
+            clip_rate = _normalize_fps(float(a.fps)) if float(a.fps) > 0 else 0.0
+        except ValueError:
+            ap.error("--fps must be 'auto' or a number")
     s = Settings(model=a.model, language=a.language, max_chars=a.max_chars, use_cache=not a.no_cache,
-                 fps=a.fps, model_dir=a.model_dir, max_words=a.max_words, export_words=a.words)
+                 model_dir=a.model_dir, max_words=a.max_words, export_words=a.words)
     if a.print_prompt:
         try:
             print(llm_prompt(parse_script(read_script_file(a.script), s), s))
@@ -1259,7 +1339,7 @@ def main(argv=None):
 
     try:
         lb = read_script_file(a.line_breaks) if a.line_breaks else None
-        res = run_job(Job(a.video, a.script, None, a.out, line_breaks=lb), s, prog)
+        res = run_job(Job(a.video, a.script, None, a.out, line_breaks=lb, fps=clip_rate), s, prog)
     except (SyncError, OSError) as e:
         print("Error:", e, file=sys.stderr)
         return 1

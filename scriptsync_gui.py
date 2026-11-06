@@ -35,6 +35,7 @@ FRAME_RATES = {
     "Don't snap": 0.0, "23.976": 24000 / 1001, "24": 24.0, "25": 25.0, "29.97": 30000 / 1001,
     "30": 30.0, "50": 50.0, "59.94": 60000 / 1001, "60": 60.0,
 }
+AUTO_FPS = "Auto (match the clip)"
 ACCENT = "#d9822b"
 BG = "#f6f5f2"
 TAGS = {"ok": "#e6f4ea", "check": "#fff3d1", "bad": "#fbdada"}
@@ -146,6 +147,7 @@ class App(tk.Tk):
         self._build_style()
         self._build_ui()
         self._load_settings()
+        self.v_fps.trace_add("write", lambda *_: [self._refresh_row(e) for e in self.entries.values()])
         self.after(100, self._poll)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -192,13 +194,21 @@ class App(tk.Tk):
         ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(bar, text="Choose script file…", command=self.set_script).pack(side="left")
         ttk.Button(bar, text="Paste script…", command=self.paste_script).pack(side="left", padx=6)
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Label(bar, text="Frame rate").pack(side="left")
+        self.var_clip_fps = tk.StringVar(value=AUTO_FPS)
+        self.cb_clip_fps = ttk.Combobox(bar, textvariable=self.var_clip_fps, state="disabled", width=20,
+                                        values=[AUTO_FPS] + list(FRAME_RATES))
+        self.cb_clip_fps.pack(side="left", padx=6)
+        self.cb_clip_fps.bind("<<ComboboxSelected>>", lambda e: self.set_clip_fps())
         ttk.Button(bar, text="Remove", command=self.remove_selected).pack(side="right")
         ttk.Button(bar, text="Clear all", command=self.clear_all).pack(side="right", padx=6)
 
-        cols = ("clip", "script", "status", "match")
+        cols = ("clip", "script", "fps", "status", "match")
         self.tree = ttk.Treeview(qf, columns=cols, show="headings", height=4, selectmode="browse")
-        for c, txt, w, anc in (("clip", "Clip", 300, "w"), ("script", "Script", 260, "w"),
-                               ("status", "Status", 330, "w"), ("match", "Heard", 90, "center")):
+        for c, txt, w, anc in (("clip", "Clip", 280, "w"), ("script", "Script", 240, "w"),
+                               ("fps", "Frame rate", 150, "w"),
+                               ("status", "Status", 260, "w"), ("match", "Heard", 80, "center")):
             self.tree.heading(c, text=txt)
             self.tree.column(c, width=w, anchor=anc, stretch=(c in ("clip", "status")))
         self.tree.pack(fill="x")
@@ -291,7 +301,7 @@ class App(tk.Tk):
             ttk.Label(nums, text=lbl).pack(side="left")
             ttk.Spinbox(nums, from_=lo, to=hi, increment=inc, textvariable=var, width=5).pack(
                 side="left", padx=(6, 20))
-        ttk.Label(nums, text="Snap to frame rate").pack(side="left")
+        ttk.Label(nums, text="Frame rate for audio-only clips").pack(side="left")
         ttk.Combobox(nums, textvariable=self.v_fps, values=list(FRAME_RATES), state="readonly",
                      width=10).pack(side="left", padx=(6, 0))
 
@@ -360,9 +370,28 @@ class App(tk.Tk):
                     self._refresh_row(e)
                 return
         job = core.Job(video=video, script_path=script, script_text=text)
-        iid = self.tree.insert("", "end", values=("", "", "", ""))
+        iid = self.tree.insert("", "end", values=("", "", "", "", ""))
         self.entries[iid] = {"iid": iid, "job": job, "result": None, "status": ""}
         self._refresh_row(self.entries[iid])
+        # read the clip's frame rate in the background (ffmpeg takes a moment per clip)
+        threading.Thread(target=lambda: self.q.put(("fps", iid, core.detect_fps(video))), daemon=True).start()
+
+    def _fps_text(self, e):
+        f = e["job"].fps
+        if f is None:
+            if "detected_fps" not in e:
+                return "Auto"
+            d = e["detected_fps"]
+            return f"Auto \u00b7 {core.fps_name(d)}" if d else f"Auto \u00b7 no video ({self.v_fps.get()})"
+        return "Don't snap" if f == 0 else f"{core.fps_name(f)} (set)"
+
+    def set_clip_fps(self):
+        e = self._selected()
+        if not e:
+            return
+        v = self.var_clip_fps.get()
+        e["job"].fps = None if v == AUTO_FPS else FRAME_RATES.get(v, 0.0)
+        self._refresh_row(e)
 
     def _refresh_row(self, e, status=None, match=None):
         job = e["job"]
@@ -384,7 +413,8 @@ class App(tk.Tk):
             tag = "review" if "review" in st else "ok"
         elif st.startswith("Error") or st.startswith("Stopped"):
             tag = "error"
-        vals = (job.label(), sc, st, match if match is not None else self.tree.set(e["iid"], "match"))
+        vals = (job.label(), sc, self._fps_text(e), st,
+                match if match is not None else self.tree.set(e["iid"], "match"))
         self.tree.item(e["iid"], values=vals, tags=(tag,) if tag else ())
 
     def add_clips(self):
@@ -628,6 +658,12 @@ class App(tk.Tk):
                         self._refresh_row(e, status=st, match=match or "")
                         if st.startswith("Error"):
                             self.summary.config(text=st)
+                elif kind == "fps":
+                    _, iid, f = m
+                    e = self.entries.get(iid)
+                    if e:
+                        e["detected_fps"] = f
+                        self._refresh_row(e)
                 elif kind == "done":
                     _, iid, res = m
                     e = self.entries.get(iid)
@@ -660,6 +696,7 @@ class App(tk.Tk):
 
     def show_selected(self):
         e = self._selected()
+        self._sync_fps_box(e)
         if not e:
             return
         if e["result"]:
@@ -668,6 +705,17 @@ class App(tk.Tk):
             self.clear_review()
             if e["status"].startswith("Error"):
                 self.summary.config(text=e["status"])
+
+    def _sync_fps_box(self, e):
+        if not e:
+            self.var_clip_fps.set(AUTO_FPS)
+            self.cb_clip_fps.config(state="disabled")
+            return
+        f = e["job"].fps
+        name = AUTO_FPS if f is None else next(
+            (k for k, v in FRAME_RATES.items() if abs(v - f) < 1e-6), AUTO_FPS)
+        self.var_clip_fps.set(name)
+        self.cb_clip_fps.config(state="readonly")
 
     def show_result(self, e):
         r = e["result"]
@@ -679,6 +727,8 @@ class App(tk.Tk):
         self.summary.config(text=f"{len(r.cues)} subtitles:  {r.n_ok} OK   {r.n_check} check   {r.n_bad} bad   "
                                  f"—  {r.match_pct:.0f}% of the script was heard")
         bits = list(r.warnings)
+        if r.fps_source:
+            bits.append(f"Frame rate: {core.fps_name(r.fps)} ({r.fps_source})")
         if r.skipped:
             bits.append(f"Left out ({len(r.skipped)}): " + "  •  ".join(t for t, _ in r.skipped[:4]) +
                         ("  …" if len(r.skipped) > 4 else "") + "   [never heard in the audio]")

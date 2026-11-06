@@ -129,10 +129,14 @@ which helps when footage was re-cut after the SRT was made.
 - **Language** - auto-detect, English, Tagalog/Filipino, Spanish.
 - **Max characters** per subtitle - default 40; set it to match your caption style.
 - **Max words** per subtitle - 0 = no limit. Short-form video often looks best with 2-4.
+- **Frame rate** (per clip, in the clip toolbar) - subtitle times are snapped to whole frames of each clip's own
+  frame rate, read from the video (shown in the **Frame rate** column). Select a clip and pick a rate to override it,
+  or **Don't snap**. Audio-only clips use the default under More options (30). Subtitles in continuous speech always
+  touch, so they never blink.
 - **More options** - ignore `[bracketed notes]`, strip `Name:` speaker labels, keep or re-flow the writer's line
-  breaks, shortest/longest subtitle, hold subtitles through short pauses, include never-heard lines, snap to your
-  project's frame rate (default 30; subtitles in continuous speech always touch, so they never blink), and a Premiere
-  fix (Premiere can drop a first cue that starts at exactly `00:00:00,000`, so it starts at `00:00:00,067`).
+  breaks, shortest/longest subtitle, hold subtitles through short pauses, include never-heard lines, the frame rate
+  for audio-only clips, and a Premiere fix (Premiere can drop a first cue that starts at exactly `00:00:00,000`, so
+  it starts at `00:00:00,067`).
 
 Styling (font, size, position, colours) is done in your editor; the SRT carries text and timing only.
 
@@ -165,7 +169,7 @@ Tick **More options > Also save every word's timing** to also get:
 python scriptsync_core.py clip.mp4 script.docx -o out_folder --model small --max-chars 40
 ```
 
-More options: `--max-words 4`, `--words` (also write the word-timing files), `--print-prompt` (print the AI-tool
+More options: `--fps 25` (frame rate to snap to; default `auto` = the clip's own, `0` = don't snap), `--max-words 4`, `--words` (also write the word-timing files), `--print-prompt` (print the AI-tool
 prompt for this script and exit) and `--line-breaks recut.txt` (use your own line breaks; checked against the script).
 
 Everything runs locally; clips and scripts never leave your machine. Transcripts are cached in
