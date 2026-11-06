@@ -477,7 +477,8 @@ class App(tk.Tk):
     def _github_link(self, parent):
         """The GitHub mark, top right: opens the project page."""
         px = float(self.tk.call("tk", "scaling")) / (96 / 72)      # 1.0 at 100% display scaling
-        self._gh_img = tk.PhotoImage(data=GITHUB_MARK[("dark", 52 if px >= 1.5 else 26)])
+        # 52 px from 150% display scaling up (which can come out as 1.4999.. here, hence 1.4)
+        self._gh_img = tk.PhotoImage(data=GITHUB_MARK[("dark", 52 if px >= 1.4 else 26)])
         lbl = ttk.Label(parent, image=self._gh_img, cursor="hand2", padding=4)
         lbl.bind("<Button-1>", lambda e: webbrowser.open(core.APP_URL))
         _Tooltip(lbl, f"Script Sync on GitHub \u2014 by {core.APP_AUTHOR}")
