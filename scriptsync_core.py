@@ -83,7 +83,7 @@ class Settings:
     fps: float = 30.0               # snap cue times to whole frames at this rate (0 = don't snap)
     premiere_zero_fix: bool = True  # Premiere quirk: it drops a cue that starts at 00:00:00,000
     include_unheard: bool = False   # keep cues for text that was never heard (timing = guess)
-    export_words: bool = False      # also write <clip>.words.json and <clip>.words.srt (one word per cue)
+    export_words: bool = False      # also write <output>.words.json and <output>.words.srt (one word per cue)
 
 
 @dataclass
@@ -1159,8 +1159,8 @@ def run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> Sy
                                   lang or s.language)
     out_dir = job.out_dir or os.path.dirname(os.path.abspath(job.video))
     os.makedirs(out_dir, exist_ok=True)
-    stem = os.path.splitext(os.path.basename(job.video))[0]
-    res.srt_path = os.path.join(out_dir, stem + ".synced.srt")
+    stem = unique_stem(out_dir, output_stem(job.video, s))
+    res.srt_path = os.path.join(out_dir, stem + ".srt")
     res.report_path = os.path.join(out_dir, stem + ".review.txt")
     progress(0.96, "Writing files")
     try:
@@ -1182,6 +1182,42 @@ def run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> Sy
 
 
 # --------------------------------------------------------------------------
+# Output file names
+# --------------------------------------------------------------------------
+_NTSC = {24000 / 1001: "23.976", 30000 / 1001: "29.97", 60000 / 1001: "59.94"}
+# Everything Script Sync writes: "<clip>_synced_..." plus the old "<clip>.synced.srt" style.
+OUTPUT_FILE = re.compile(r"(_synced_.*|\.synced)\.srt$|\.review\.txt$|\.words\.(srt|json)$", re.I)
+
+
+def fps_label(fps: float) -> str:
+    """30 -> "30fps", 29.97002997 -> "29.97fps", 0 -> "nosnap"."""
+    if not fps or fps <= 0:
+        return "nosnap"
+    for exact, name in _NTSC.items():
+        if abs(fps - exact) < 0.005:
+            return name + "fps"
+    return f"{fps:.3f}".rstrip("0").rstrip(".") + "fps"
+
+
+def output_stem(video: str, s: Settings, when: Optional[float] = None) -> str:
+    """<clip>_synced_<max chars>ch_<max words>w_<fps>_<date>_<time>, e.g.
+    MyClip_synced_40ch_0w_30fps_2026-11-06_14-32-05  (0w = no word limit).
+    Every sync gets its own name, so earlier versions are never overwritten."""
+    clip = os.path.splitext(os.path.basename(video))[0]
+    stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(when))
+    return f"{clip}_synced_{s.max_chars}ch_{max(s.max_words, 0)}w_{fps_label(s.fps)}_{stamp}"
+
+
+def unique_stem(out_dir: str, stem: str) -> str:
+    """Add _2, _3 ... if a sync with this exact name already exists (two syncs in the same second)."""
+    cand, n = stem, 2
+    while any(os.path.exists(os.path.join(out_dir, cand + ext))
+              for ext in (".srt", ".review.txt", ".words.json", ".words.srt")):
+        cand, n = f"{stem}_{n}", n + 1
+    return cand
+
+
+# --------------------------------------------------------------------------
 # Finding script files for clips
 # --------------------------------------------------------------------------
 def find_script_for(video: str) -> Optional[str]:
@@ -1196,7 +1232,7 @@ def find_script_for(video: str) -> Optional[str]:
         fs, ext = os.path.splitext(f)
         if ext.lower() not in SCRIPT_EXTS or f.startswith("~$"):
             continue
-        if f.lower().endswith((".synced.srt", ".words.srt")):
+        if OUTPUT_FILE.search(f):           # our own output (subtitles, review sheets), not a script
             continue
         if fs.lower() == stem:
             cands.append((0, SCRIPT_EXTS.index(ext.lower()), f))
@@ -1237,7 +1273,7 @@ def main(argv=None):
                          "or $SCRIPTSYNC_MODEL_DIR)")
     ap.add_argument("--max-words", type=int, default=0, help="max words per subtitle (0 = no limit)")
     ap.add_argument("--words", action="store_true",
-                    help="also write <clip>.words.json and <clip>.words.srt (every word with its time)")
+                    help="also write <output>.words.json and <output>.words.srt (every word with its time)")
     ap.add_argument("--line-breaks", metavar="FILE",
                     help="the same script re-cut into subtitle lines (e.g. by an AI tool): one cue per line")
     ap.add_argument("--print-prompt", action="store_true",

@@ -10,7 +10,10 @@ dist/
 
 # Tool output and local data
 *.synced.srt
+*_synced_*.srt
 *.review.txt
+*.words.json
+*.words.srt
 *.asr.json
 
 # Media (never commit footage or test clips)
