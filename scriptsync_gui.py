@@ -82,6 +82,13 @@ FRAME_RATES = {
     "30": 30.0, "50": 50.0, "59.94": 60000 / 1001, "60": 60.0,
 }
 AUTO_FPS = "Auto (match the clip)"
+# Subtitle-shape presets: (description, max characters, max words, shortest s, longest s, hold through pauses s)
+PRESETS = {
+    "Short-form": ("18 characters \u00b7 4 words", 18, 4, 0.8, 5.0, 0.4),
+    "Standard": ("40 characters", 40, 0, 0.8, 5.0, 0.4),
+    "Long-form": ("42 characters \u00b7 up to 7 s", 42, 0, 0.8, 7.0, 0.4),
+}
+CUSTOM = "Custom"
 
 # Light and night colours. Every text/background pair here passes WCAG AA contrast (4.5:1 or more).
 PALETTES = {
@@ -89,7 +96,7 @@ PALETTES = {
         "bg": "#f6f5f2", "panel": "#fbfaf8", "field": "#ffffff", "border": "#c9c5bc", "head": "#ebe8e1",
         "text": "#1f1f1f", "sub": "#5f5f5f", "disabled": "#8c8c8c", "btn": "#ece9e2", "btn_hover": "#e2ded5",
         "track": "#e3e0d8", "accent": "#d9822b", "accent_hover": "#e39448", "on_accent": "#1f1f1f",
-        "sel": "#3d5a80", "sel_text": "#ffffff", "link": "#2f4f78",
+        "sel": "#3d5a80", "sel_text": "#ffffff", "link": "#2f4f78", "chosen": "#fdf1e4",
         "ok": "#e6f4ea", "check": "#fff3d1", "bad": "#fbdada", "ok_text": "#1e6b3a", "check_text": "#7a5200",
         "bad_text": "#a1262b", "tip_bg": "#24292f", "tip_text": "#ffffff",
         "dot_idle": "#e0b42f", "dot_wait": "#d9822b", "dot_run": "#2e9d57", "dot_err": "#d1453b",
@@ -99,7 +106,7 @@ PALETTES = {
         "bg": "#1e1f22", "panel": "#25272b", "field": "#2b2d31", "border": "#43464d", "head": "#26282c",
         "text": "#e8e8e8", "sub": "#a6a9b0", "disabled": "#6f737a", "btn": "#2f3136", "btn_hover": "#3a3d43",
         "track": "#3a3d43", "accent": "#e39a4e", "accent_hover": "#eeac68", "on_accent": "#1a1a1a",
-        "sel": "#3d5a80", "sel_text": "#ffffff", "link": "#9cc0ee",
+        "sel": "#3d5a80", "sel_text": "#ffffff", "link": "#9cc0ee", "chosen": "#3a2d1f",
         "ok": "#1f3a2b", "check": "#463a12", "bad": "#4d2427", "ok_text": "#7fd49b", "check_text": "#f2c75c",
         "bad_text": "#ff9a9e", "tip_bg": "#e8e8e8", "tip_text": "#1a1a1a",
         "dot_idle": "#e8c34a", "dot_wait": "#e39a4e", "dot_run": "#4cc27a", "dot_err": "#ff6b6b",
@@ -410,6 +417,16 @@ class App(tk.Tk):
                      arrowcolor=P["text"], lightcolor=P["btn"], darkcolor=P["btn"])
         st.map("Vertical.TScrollbar", background=[("active", P["btn_hover"])])
         st.configure("TSeparator", background=P["border"])
+        st.configure("Preset.Toolbutton", background=P["btn"], foreground=P["text"], bordercolor=P["border"],
+                     lightcolor=P["btn"], darkcolor=P["btn"], padding=(12, 7), anchor="w", relief="solid",
+                     borderwidth=1)
+        st.map("Preset.Toolbutton",
+               background=[("selected", P["chosen"]), ("active", P["btn_hover"])],
+               bordercolor=[("selected", P["accent"])], lightcolor=[("selected", P["accent"])],
+               darkcolor=[("selected", P["accent"])], font=[("selected", ("Segoe UI", 10, "bold"))])
+        st.configure("TLabelframe", background=P["bg"], bordercolor=P["border"], lightcolor=P["bg"],
+                     darkcolor=P["bg"])
+        st.configure("TLabelframe.Label", background=P["bg"], foreground=P["text"], font=("Segoe UI", 10, "bold"))
         st.configure("Status.TFrame", background=P["head"])
         st.configure("Status.TLabel", background=P["head"], foreground=P["text"], font=("Segoe UI", 10, "bold"))
         st.configure("StatusSub.TLabel", background=P["head"], foreground=P["sub"])
@@ -540,40 +557,14 @@ class App(tk.Tk):
             "and 'Add a folder' will pair them for you."))
         self.hint.pack(anchor="w", pady=(6, 0))
 
-        # ---- settings
-        sf = self._section(2, "Settings", fill="x")
-        r1 = ttk.Frame(sf)
-        r1.pack(fill="x")
-        ttk.Label(r1, text="Listening quality").grid(row=0, column=0, sticky="w")
+        # ---- subtitle style: presets first; Custom shows every value
+        sf = self._section(2, "Subtitle style", fill="x")
         self.var_model = tk.StringVar(value=list(MODELS)[1])
-        ttk.Combobox(r1, textvariable=self.var_model, values=list(MODELS), state="readonly",
-                     width=30).grid(row=0, column=1, padx=(8, 16), sticky="w")
-        ttk.Label(r1, text="Language").grid(row=0, column=2, sticky="w")
         self.var_lang = tk.StringVar(value="Auto-detect")
-        ttk.Combobox(r1, textvariable=self.var_lang, values=list(LANGS), state="readonly",
-                     width=16).grid(row=0, column=3, padx=(8, 16), sticky="w")
-        ttk.Label(r1, text="Max characters").grid(row=0, column=4, sticky="w")
         self.var_maxchars = tk.IntVar(value=40)
-        ttk.Spinbox(r1, from_=12, to=120, textvariable=self.var_maxchars, width=5).grid(
-            row=0, column=5, padx=8, sticky="w")
-        ttk.Label(r1, text="Max words").grid(row=0, column=6, sticky="w", padx=(6, 0))
         self.var_maxwords = tk.IntVar(value=0)
-        ttk.Spinbox(r1, from_=0, to=20, textvariable=self.var_maxwords, width=4).grid(
-            row=0, column=7, padx=8, sticky="w")
-
-        r2 = ttk.Frame(sf)
-        r2.pack(fill="x", pady=(10, 0))
-        ttk.Label(r2, text="Save to  (blank = beside each clip)").pack(side="left")
         self.var_out = tk.StringVar(value="")
-        self.out_entry = ttk.Entry(r2, textvariable=self.var_out)
-        self.out_entry.pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Button(r2, text="Choose folder\u2026", command=self.choose_out).pack(side="left")
-        ttk.Button(r2, text="Clear", command=lambda: self.var_out.set("")).pack(side="left", padx=(6, 0))
-
-        self.adv_open = tk.BooleanVar(value=False)
-        ttk.Checkbutton(sf, text="More options", variable=self.adv_open, command=self._toggle_adv).pack(
-            anchor="w", pady=(6, 0))
-        self.adv = ttk.Frame(sf)
+        self.var_preset = tk.StringVar(value="Standard")
         self.v_brackets = tk.BooleanVar(value=True)
         self.v_labels = tk.BooleanVar(value=False)
         self.v_lines = tk.BooleanVar(value=True)
@@ -586,46 +577,80 @@ class App(tk.Tk):
         self.v_bridge = tk.DoubleVar(value=0.4)
         self.v_maxsec = tk.DoubleVar(value=5.0)
         self.v_fps = tk.StringVar(value="30")
-        opts = [
-            (self.v_brackets, "Ignore [bracketed notes] in the script"),
-            (self.v_labels, "Script has speaker labels like  'Sam:'  (remove them)"),
-            (self.v_lines, "Keep the writer's line breaks as subtitle breaks"),
-            (self.v_zero, "Premiere fix: never start the first subtitle at 00:00:00,000"),
-            (self.v_prime, "Tell the listener the names/brands in the script (helps spelling)"),
-            (self.v_unheard, "Also include lines that were never heard (timing is a guess)"),
-            (self.v_cache, "Re-use the saved transcript if the clip hasn't changed (faster)"),
-            (self.v_words, "Also save every word's timing (.words.json / .words.srt) for other tools"),
-        ]
-        for i, (v, txt) in enumerate(opts):
-            ttk.Checkbutton(self.adv, text=txt, variable=v).grid(row=i // 2, column=i % 2, sticky="w",
-                                                                 padx=(0, 24), pady=1)
-        nums = ttk.Frame(self.adv)
-        nums.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        mf = ttk.Frame(self.adv)
-        mf.grid(row=6, column=0, columnspan=2, sticky="we", pady=(8, 0))
         self.v_modeldir = tk.StringVar(value=os.environ.get("SCRIPTSYNC_MODEL_DIR", ""))
-        ttk.Label(mf, text="Speech model folder  (blank = default)").pack(side="left")
-        ttk.Entry(mf, textvariable=self.v_modeldir, width=48).pack(side="left", padx=8)
-        ttk.Button(mf, text="Choose folder\u2026", command=self.choose_model_dir).pack(side="left")
-        ttk.Button(mf, text="Clear", command=lambda: self.v_modeldir.set("")).pack(side="left", padx=(6, 0))
-        ttk.Label(self.adv, style="Sub.TLabel", text=(
-            f"Default: {core.default_model_dir()}   (models are 150 MB-1.6 GB; changing the folder downloads "
-            "them again)")
-                  ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
-        tf = ttk.Frame(self.adv)
-        tf.grid(row=8, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        ttk.Label(tf, text="Troubleshooting").pack(side="left")
-        ttk.Button(tf, text="Open log folder", command=self.open_logs).pack(side="left", padx=8)
-        ttk.Button(tf, text="Copy diagnostic info", command=self.copy_diagnostics).pack(side="left")
-        for lbl, var, lo, hi, inc in (("Shortest subtitle (sec)", self.v_mincue, 0.2, 3, 0.1),
-                                      ("Hold through pauses up to (sec)", self.v_bridge, 0, 2, 0.1),
-                                      ("Longest subtitle (sec)", self.v_maxsec, 2, 15, 0.5)):
-            ttk.Label(nums, text=lbl).pack(side="left")
-            ttk.Spinbox(nums, from_=lo, to=hi, increment=inc, textvariable=var, width=5).pack(
-                side="left", padx=(6, 20))
-        ttk.Label(nums, text="Frame rate for audio-only clips").pack(side="left")
-        ttk.Combobox(nums, textvariable=self.v_fps, values=list(FRAME_RATES), state="readonly",
-                     width=10).pack(side="left", padx=(6, 0))
+
+        presets = ttk.Frame(sf)
+        presets.pack(fill="x")
+        for i, name in enumerate(list(PRESETS) + [CUSTOM]):
+            desc = PRESETS[name][0] if name in PRESETS else "your own limits"
+            presets.columnconfigure(i, weight=1, uniform="preset")
+            ttk.Radiobutton(presets, text=f"{name}   {desc}", value=name, variable=self.var_preset,
+                            style="Preset.Toolbutton", command=self._preset_chosen).grid(
+                row=0, column=i, sticky="we", padx=(0 if i == 0 else 8, 0))
+
+        # everyday row (hidden while Custom shows the full groups)
+        self.simple_row = ttk.Frame(sf)
+        r = self.simple_row
+        ttk.Label(r, text="Listening").pack(side="left")
+        ttk.Combobox(r, textvariable=self.var_model, values=list(MODELS), state="readonly", width=30).pack(
+            side="left", padx=(8, 6))
+        ttk.Combobox(r, textvariable=self.var_lang, values=list(LANGS), state="readonly", width=16).pack(side="left")
+        ttk.Label(r, text="Save to").pack(side="left", padx=(16, 0))
+        ttk.Entry(r, textvariable=self.var_out).pack(side="left", fill="x", expand=True, padx=8)
+        ttk.Button(r, text="Choose\u2026", command=self.choose_out).pack(side="left")
+        ttk.Button(r, text="More options\u2026", command=self.open_more_options).pack(side="left", padx=(8, 0))
+
+        # Custom: the three groups
+        self.custom_box = ttk.Frame(sf)
+        g = self.custom_box
+        for i in range(3):
+            g.columnconfigure(i, weight=1, uniform="grp")
+
+        def group(col, title):
+            f = ttk.LabelFrame(g, text=f" {title} ", padding=(10, 6))
+            f.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 10, 0))
+            f.columnconfigure(1, weight=1)
+            return f
+
+        def row(f, r_, label, widget_fn):
+            ttk.Label(f, text=label).grid(row=r_, column=0, sticky="w", pady=2)
+            w = widget_fn(f)
+            w.grid(row=r_, column=1, sticky="e", pady=2)
+            return w
+        lis = group(0, "Listening")
+        row(lis, 0, "Quality", lambda f: ttk.Combobox(f, textvariable=self.var_model, values=list(MODELS),
+                                                      state="readonly", width=26))
+        row(lis, 1, "Language", lambda f: ttk.Combobox(f, textvariable=self.var_lang, values=list(LANGS),
+                                                       state="readonly", width=26))
+        ttk.Label(lis, text="Changing these listens to the clip again.", style="Sub.TLabel").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        shp = group(1, "Subtitle shape")
+        row(shp, 0, "Max characters", lambda f: ttk.Spinbox(f, from_=10, to=120, textvariable=self.var_maxchars,
+                                                            width=6))
+        row(shp, 1, "Max words (0 = any)", lambda f: ttk.Spinbox(f, from_=0, to=20, textvariable=self.var_maxwords,
+                                                                 width=6))
+        secs = ttk.Frame(shp)
+        ttk.Spinbox(secs, from_=0.2, to=3, increment=0.1, textvariable=self.v_mincue, width=5).pack(side="left")
+        ttk.Label(secs, text="to").pack(side="left", padx=4)
+        ttk.Spinbox(secs, from_=2, to=15, increment=0.5, textvariable=self.v_maxsec, width=5).pack(side="left")
+        row(shp, 2, "On screen (seconds)", lambda f: secs)
+        row(shp, 3, "Hold through pauses up to (s)", lambda f: ttk.Spinbox(
+            f, from_=0, to=2, increment=0.1, textvariable=self.v_bridge, width=6))
+        outg = group(2, "Output")
+        ttk.Label(outg, text="Save to  (blank = beside each clip)").grid(row=0, column=0, columnspan=2, sticky="w")
+        so = ttk.Frame(outg)
+        so.grid(row=1, column=0, columnspan=2, sticky="we", pady=(2, 4))
+        ttk.Entry(so, textvariable=self.var_out).pack(side="left", fill="x", expand=True)
+        ttk.Button(so, text="Choose\u2026", command=self.choose_out).pack(side="left", padx=(6, 0))
+        row(outg, 2, "Frame rate for audio-only clips", lambda f: ttk.Combobox(
+            f, textvariable=self.v_fps, values=list(FRAME_RATES), state="readonly", width=10))
+        ttk.Checkbutton(outg, text="Also save word timings", variable=self.v_words).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=2)
+        self.custom_foot = ttk.Frame(sf)
+        ttk.Label(self.custom_foot, style="Sub.TLabel", text=(
+            "Custom keeps your own values. Picking a preset again only changes Subtitle shape.")).pack(side="left")
+        ttk.Button(self.custom_foot, text="More options\u2026", command=self.open_more_options).pack(side="right")
+        self._show_style_rows()
 
         # ---- run
         rf = ttk.Frame(self, padding=(16, 10, 16, 2))
@@ -685,13 +710,6 @@ class App(tk.Tk):
         _Tooltip(lbl, f"{core.APP_NAME} on GitHub \u2014 by {core.APP_AUTHOR}")
         return lbl
 
-    def _toggle_adv(self):
-        if self.adv_open.get():
-            self.adv.pack(anchor="w", pady=(4, 0))
-        else:
-            self.adv.pack_forget()
-
-    # ------------------------------------------------------------ queue ops
     def _add_entry(self, video, script=None, text=None):
         for e in self.entries.values():
             if os.path.abspath(e["job"].video) == os.path.abspath(video):
@@ -983,6 +1001,110 @@ class App(tk.Tk):
             messagebox.showerror("Can't use that folder", str(e))
 
     # ------------------------------------------------------------ settings
+    # ------------------------------------------------------------ subtitle style
+    def _preset_chosen(self):
+        name = self.var_preset.get()
+        if name in PRESETS:
+            _d, chars, words, shortest, longest, hold = PRESETS[name]
+            self.var_maxchars.set(chars)
+            self.var_maxwords.set(words)
+            self.v_mincue.set(shortest)
+            self.v_maxsec.set(longest)
+            self.v_bridge.set(hold)
+        log.info("subtitle style: %s", name)
+        self._show_style_rows()
+
+    def _show_style_rows(self):
+        custom = self.var_preset.get() == CUSTOM
+        for w in (self.simple_row, self.custom_box, self.custom_foot):
+            w.pack_forget()
+        if custom:
+            self.custom_box.pack(fill="x", pady=(10, 0))
+            self.custom_foot.pack(fill="x", pady=(6, 0))
+        else:
+            self.simple_row.pack(fill="x", pady=(10, 0))
+
+    def _matching_preset(self):
+        """The preset whose values are the current ones (else Custom), for settings saved before presets."""
+        try:
+            now = (int(self.var_maxchars.get()), int(self.var_maxwords.get()), float(self.v_mincue.get()),
+                   float(self.v_maxsec.get()), float(self.v_bridge.get()))
+        except (tk.TclError, ValueError):
+            return CUSTOM
+        for name, (_d, *vals) in PRESETS.items():
+            if all(abs(a - b) < 1e-6 for a, b in zip(now, vals)):
+                return name
+        return CUSTOM
+
+    def open_more_options(self):
+        """Rarely-changed options, in their own window (they used to push the Review list off-screen)."""
+        dlg = tk.Toplevel(self)
+        dlg.title("More options")
+        dlg.transient(self)
+        dlg.configure(bg=P["bg"])
+        body = ttk.Frame(dlg, padding=16)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Script", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        opts = [
+            (self.v_brackets, "Ignore [bracketed notes] in the script"),
+            (self.v_labels, "Script has speaker labels like  'Sam:'  (remove them)"),
+            (self.v_lines, "Keep the writer's line breaks as subtitle breaks"),
+            (self.v_prime, "Tell the listener the names/brands in the script (helps spelling)"),
+        ]
+        r = 1
+        for v, txt in opts:
+            ttk.Checkbutton(body, text=txt, variable=v).grid(row=r, column=0, columnspan=3, sticky="w", pady=1)
+            r += 1
+        ttk.Label(body, text="Subtitles", style="Section.TLabel").grid(row=r, column=0, sticky="w", pady=(12, 0))
+        r += 1
+        for v, txt in ((self.v_zero, "Premiere fix: never start the first subtitle at 00:00:00,000"),
+                       (self.v_unheard, "Also include lines that were never heard (timing is a guess)"),
+                       (self.v_words, "Also save every word's timing (.words.json / .words.srt) for other tools")):
+            ttk.Checkbutton(body, text=txt, variable=v).grid(row=r, column=0, columnspan=3, sticky="w", pady=1)
+            r += 1
+        fr = ttk.Frame(body)
+        fr.grid(row=r, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Label(fr, text="Frame rate for audio-only clips").pack(side="left")
+        ttk.Combobox(fr, textvariable=self.v_fps, values=list(FRAME_RATES), state="readonly", width=10).pack(
+            side="left", padx=8)
+        r += 1
+        ttk.Label(body, text="Speed and storage", style="Section.TLabel").grid(row=r, column=0, sticky="w",
+                                                                               pady=(12, 0))
+        r += 1
+        ttk.Checkbutton(body, text="Re-use the saved transcript if the clip hasn't changed (faster)",
+                        variable=self.v_cache).grid(row=r, column=0, columnspan=3, sticky="w", pady=1)
+        r += 1
+        mf = ttk.Frame(body)
+        mf.grid(row=r, column=0, columnspan=3, sticky="we", pady=(4, 0))
+        ttk.Label(mf, text="Speech model folder").pack(side="left")
+        ttk.Entry(mf, textvariable=self.v_modeldir, width=40).pack(side="left", padx=8, fill="x", expand=True)
+        ttk.Button(mf, text="Choose\u2026", command=self.choose_model_dir).pack(side="left")
+        ttk.Button(mf, text="Clear", command=lambda: self.v_modeldir.set("")).pack(side="left", padx=(6, 0))
+        r += 1
+        ttk.Label(body, style="Sub.TLabel", text=(
+            f"Blank = {core.default_model_dir()}. Models are 150 MB-1.6 GB; changing the folder downloads "
+            "them again.")).grid(row=r, column=0, columnspan=3, sticky="w")
+        r += 1
+        ttk.Label(body, text="Troubleshooting", style="Section.TLabel").grid(row=r, column=0, sticky="w",
+                                                                             pady=(12, 0))
+        r += 1
+        tf = ttk.Frame(body)
+        tf.grid(row=r, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Button(tf, text="Open log folder", command=self.open_logs).pack(side="left")
+        ttk.Button(tf, text="Copy diagnostic info", command=self.copy_diagnostics).pack(side="left", padx=8)
+        r += 1
+        ttk.Button(body, text="Close", style="Accent.TButton", command=dlg.destroy).grid(
+            row=r, column=2, sticky="e", pady=(16, 0))
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.update_idletasks()
+        x = self.winfo_rootx() + max((self.winfo_width() - dlg.winfo_reqwidth()) // 2, 0)
+        y = self.winfo_rooty() + int(80 * self.px)
+        dlg.geometry(f"+{x}+{y}")
+        dark_title_bar(dlg, self.theme == "night")
+        dlg.grab_set()
+        self.wait_window(dlg)
+        self._save_settings()
+
     def current_settings(self) -> core.Settings:
         try:
             maxc = max(10, int(self.var_maxchars.get()))
@@ -1025,7 +1147,7 @@ class App(tk.Tk):
                 "unheard": self.v_unheard.get(), "cache": self.v_cache.get(),
                 "mincue": self.v_mincue.get(), "bridge": self.v_bridge.get(), "maxsec": self.v_maxsec.get(),
                 "fps": self.v_fps.get(), "modeldir": self.v_modeldir.get(), "appearance": self.appearance,
-                "maxwords": self.var_maxwords.get(), "words": self.v_words.get()}
+                "maxwords": self.var_maxwords.get(), "words": self.v_words.get(), "preset": self.var_preset.get()}
         try:
             json.dump(data, open(settings_path(), "w"))
         except Exception:
@@ -1058,8 +1180,11 @@ class App(tk.Tk):
             for k, v in (("mincue", self.v_mincue), ("bridge", self.v_bridge), ("maxsec", self.v_maxsec)):
                 if k in d:
                     v.set(float(d[k]))
+            p = d.get("preset")
+            self.var_preset.set(p if p in PRESETS or p == CUSTOM else self._matching_preset())
+            self._show_style_rows()
         except Exception:
-            pass
+            log.warning("couldn't load all settings", exc_info=True)
 
     # ------------------------------------------------------------ running
     def _busy(self):
