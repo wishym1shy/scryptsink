@@ -267,12 +267,16 @@ class _Tooltip:
 
 
 class PasteDialog(tk.Toplevel):
-    def __init__(self, parent, title, initial=""):
+    """Paste (or edit) a script. With allow_import, a button picks a script file instead:
+    afterwards .result is the text (or None) and .result_path the chosen file (or None)."""
+
+    def __init__(self, parent, title, initial="", allow_import=False):
         super().__init__(parent)
         self.title(title)
         self.transient(parent)
         self.configure(bg=P["bg"])
         self.result = None
+        self.result_path = None
         # Pack order matters: tkinter hands out space in the order widgets are packed. The buttons
         # go in first (docked to the bottom) so the text box can only take what is left, and the
         # buttons can never be pushed off-screen (they used to be, until the window was enlarged).
@@ -280,7 +284,9 @@ class PasteDialog(tk.Toplevel):
         bar.pack(side="bottom", fill="x")
         ttk.Button(bar, text="Use this script", style="Accent.TButton", command=self.ok).pack(side="right")
         ttk.Button(bar, text="Cancel", command=self.destroy).pack(side="right", padx=8)
-        ttk.Label(bar, text="Ctrl+Enter = use this script", style="Sub.TLabel").pack(side="left")
+        ttk.Label(bar, text="Ctrl+Enter", style="Sub.TLabel").pack(side="right", padx=(0, 6))
+        if allow_import:
+            ttk.Button(bar, text="Import .txt / .srt instead\u2026", command=self.import_file).pack(side="left")
         ttk.Label(self, text="Paste the writer's script here (one subtitle line per line).",
                   padding=(12, 10, 12, 4)).pack(side="top", anchor="w")
         tf = ttk.Frame(self)
@@ -315,6 +321,14 @@ class PasteDialog(tk.Toplevel):
     def ok(self):
         self.result = self.text.get("1.0", "end").strip()
         self.destroy()
+
+    def import_file(self):
+        p = filedialog.askopenfilename(
+            parent=self, title="Choose the writer's script",
+            filetypes=[("Scripts", "*.txt *.srt *.docx *.md"), ("All files", "*.*")])
+        if p:
+            self.result_path = p
+            self.destroy()
 
 
 class LineBreaksDialog(PasteDialog):
@@ -355,6 +369,7 @@ class App(tk.Tk):
         self.after(100, self._poll)
         self.after(50, lambda: dark_title_bar(self, self.theme == "night"))
         self._update_status()
+        self._show_panel()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------ theme
@@ -427,6 +442,15 @@ class App(tk.Tk):
         st.configure("TLabelframe", background=P["bg"], bordercolor=P["border"], lightcolor=P["bg"],
                      darkcolor=P["bg"])
         st.configure("TLabelframe.Label", background=P["bg"], foreground=P["text"], font=("Segoe UI", 10, "bold"))
+        st.configure("Panel.TFrame", background=P["panel"], bordercolor=P["border"], relief="solid", borderwidth=1)
+        st.configure("PanelIn.TFrame", background=P["panel"])
+        st.configure("Panel.TLabel", background=P["panel"], foreground=P["text"])
+        st.configure("PanelSub.TLabel", background=P["panel"], foreground=P["sub"])
+        st.configure("PanelBold.TLabel", background=P["panel"], foreground=P["text"], font=("Segoe UI", 10, "bold"))
+        st.configure("PanelTitle.TLabel", background=P["panel"], foreground=P["text"], font=("Segoe UI", 12, "bold"))
+        for lvl in ("ok", "check", "bad"):
+            st.configure(f"Panel{lvl.title()}.TLabel", background=P["panel"], foreground=P[f"{lvl}_text"],
+                         font=("Segoe UI", 10, "bold"))
         st.configure("Status.TFrame", background=P["head"])
         st.configure("Status.TLabel", background=P["head"], foreground=P["text"], font=("Segoe UI", 10, "bold"))
         st.configure("StatusSub.TLabel", background=P["head"], foreground=P["sub"])
@@ -523,39 +547,32 @@ class App(tk.Tk):
         # ---- status bar (packed now so it keeps its place at the bottom)
         self._build_status_bar()
 
-        # ---- queue
+        # ---- clips: list on the left, the selected clip on the right
         qf = self._section(1, "Clips and scripts", fill="x")
-        bar = ttk.Frame(qf)
+        left = ttk.Frame(qf)
+        left.pack(side="left", fill="y")
+        bar = ttk.Frame(left)
         bar.pack(fill="x", pady=(0, 6))
         ttk.Button(bar, text="+ Add clips…", command=self.add_clips).pack(side="left")
         ttk.Button(bar, text="+ Add a folder…", command=self.add_folder).pack(side="left", padx=6)
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Button(bar, text="Choose script file…", command=self.set_script).pack(side="left")
-        ttk.Button(bar, text="Paste script…", command=self.paste_script).pack(side="left", padx=6)
-        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Label(bar, text="Frame rate").pack(side="left")
-        self.var_clip_fps = tk.StringVar(value=AUTO_FPS)
-        self.cb_clip_fps = ttk.Combobox(bar, textvariable=self.var_clip_fps, state="disabled", width=20,
-                                        values=[AUTO_FPS] + list(FRAME_RATES))
-        self.cb_clip_fps.pack(side="left", padx=6)
-        self.cb_clip_fps.bind("<<ComboboxSelected>>", lambda e: self.set_clip_fps())
         ttk.Button(bar, text="Remove", command=self.remove_selected).pack(side="right")
         ttk.Button(bar, text="Clear all", command=self.clear_all).pack(side="right", padx=6)
-
-        cols = ("clip", "script", "fps", "status", "match")
-        self.tree = ttk.Treeview(qf, columns=cols, show="headings", height=4, selectmode="browse")
-        for c, txt, w, anc in (("clip", "Clip", 280, "w"), ("script", "Script", 240, "w"),
-                               ("fps", "Frame rate", 150, "w"),
-                               ("status", "Status", 260, "w"), ("match", "Heard", 80, "center")):
-            self.tree.heading(c, text=txt)
-            self.tree.column(c, width=w, anchor=anc, stretch=(c in ("clip", "status")))
-        self.tree.pack(fill="x")
+        cols = ("clip", "status")
+        self.tree = ttk.Treeview(left, columns=cols, show="headings", height=5, selectmode="browse")
+        self.tree.heading("clip", text="Clip")
+        self.tree.heading("status", text="Status")
+        self.tree.column("clip", width=int(250 * self.px), anchor="w", stretch=True)
+        self.tree.column("status", width=int(170 * self.px), anchor="w", stretch=False)
+        self.tree.pack(fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.show_selected())
-        self.tree.bind("<Double-1>", lambda e: self.set_script())
-        self.hint = ttk.Label(qf, style="Sub.TLabel", text=(
-            "Tip: put the script next to the clip with the same name (clip.mp4 + clip.docx / .txt / .srt) "
-            "and 'Add a folder' will pair them for you."))
-        self.hint.pack(anchor="w", pady=(6, 0))
+        self.tree.bind("<Double-1>", lambda e: self.edit_script())
+        self.tree.bind("<Return>", lambda e: self.edit_script())
+        self.tree.bind("<Delete>", lambda e: self.remove_selected())
+
+        self.panel = ttk.Frame(qf, style="Panel.TFrame", padding=(14, 10))
+        self.panel.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        self._build_clip_panel()
+        self._build_empty_panel()
 
         # ---- subtitle style: presets first; Custom shows every value
         sf = self._section(2, "Subtitle style", fill="x")
@@ -710,6 +727,145 @@ class App(tk.Tk):
         _Tooltip(lbl, f"{core.APP_NAME} on GitHub \u2014 by {core.APP_AUTHOR}")
         return lbl
 
+    # ------------------------------------------------------------ selected-clip panel
+    def _build_clip_panel(self):
+        b = self.clip_box = ttk.Frame(self.panel, style="PanelIn.TFrame")
+        b.columnconfigure(1, weight=1)
+        top = ttk.Frame(b, style="PanelIn.TFrame")
+        top.grid(row=0, column=0, columnspan=3, sticky="we", pady=(0, 8))
+        self.p_title = ttk.Label(top, style="PanelTitle.TLabel")
+        self.p_title.pack(side="left")
+        self.p_info = ttk.Label(top, style="PanelSub.TLabel")
+        self.p_info.pack(side="left", padx=(10, 0))
+
+        def key(row, text):
+            ttk.Label(b, text=text, style="PanelSub.TLabel", width=11).grid(row=row, column=0, sticky="w", pady=3)
+        key(1, "Script")
+        self.p_script = ttk.Label(b, style="PanelBold.TLabel")
+        self.p_script.grid(row=1, column=1, sticky="w")
+        ttk.Button(b, text="Edit or replace…", command=self.edit_script).grid(row=1, column=2, sticky="e")
+        key(2, "Frame rate")
+        self.var_clip_fps = tk.StringVar(value=AUTO_FPS)
+        self.cb_clip_fps = ttk.Combobox(b, textvariable=self.var_clip_fps, state="readonly", width=30,
+                                        values=[AUTO_FPS] + list(FRAME_RATES))
+        self.cb_clip_fps.grid(row=2, column=1, columnspan=2, sticky="w", pady=3)
+        self.cb_clip_fps.bind("<<ComboboxSelected>>", lambda e: self.set_clip_fps())
+        key(3, "Last sync")
+        self.p_last = ttk.Label(b, style="Panel.TLabel")
+        self.p_last.grid(row=3, column=1, sticky="w")
+        self.p_show = ttk.Button(b, text="Show in folder", command=lambda: reveal(self._last_output))
+        self.p_show.grid(row=3, column=2, sticky="e")
+        b.rowconfigure(4, weight=1)
+        bottom = ttk.Frame(b, style="PanelIn.TFrame")
+        bottom.grid(row=5, column=0, columnspan=3, sticky="we", pady=(8, 0))
+        self.p_result = ttk.Label(bottom, style="PanelBold.TLabel")
+        self.p_result.pack(side="left")
+        self.p_result_more = ttk.Label(bottom, style="PanelSub.TLabel")
+        self.p_result_more.pack(side="left", padx=(8, 0))
+        self.p_resync = ttk.Button(bottom, command=self.resync_selected)
+        self.p_resync.pack(side="right")
+
+    def _build_empty_panel(self):
+        b = self.empty_box = ttk.Frame(self.panel, style="PanelIn.TFrame")
+        ttk.Label(b, text="Add the clips you want subtitles for", style="PanelTitle.TLabel").pack(pady=(14, 6))
+        ttk.Label(b, style="PanelSub.TLabel", justify="center", wraplength=int(520 * self.px), text=(
+            "A script saved next to its clip with the same name (clip.mp4 + clip.docx / .txt / .srt) is paired "
+            "automatically. Otherwise double-click a clip to paste its script.")).pack()
+        row = ttk.Frame(b, style="PanelIn.TFrame")
+        row.pack(pady=(12, 0))
+        ttk.Button(row, text="+ Add clips…", style="Accent.TButton", command=self.add_clips).pack(side="left")
+        ttk.Button(row, text="+ Add a folder…", command=self.add_folder).pack(side="left", padx=8)
+
+    def _show_panel(self):
+        """Fill the right-hand panel for the selected clip (or the 'add clips' prompt)."""
+        e = self._selected()
+        if not e:
+            self.clip_box.pack_forget()
+            self.empty_box.pack(fill="both", expand=True)
+            return
+        self.empty_box.pack_forget()
+        self.clip_box.pack(fill="both", expand=True)
+        job = e["job"]
+        self.p_title.configure(text=job.label())
+        pr = e.get("probe")
+        if pr:
+            bits = [self._clock(pr["duration"])] if pr.get("duration") else []
+            bits.append(f"{pr['width']}\u00d7{pr['height']}" if pr.get("width") else "audio only")
+            self.p_info.configure(text=" \u00b7 ".join(bits))
+        else:
+            self.p_info.configure(text="")
+        if job.script_text:
+            sc = "(pasted text)"
+        elif job.script_path:
+            sc = os.path.basename(job.script_path)
+        else:
+            sc = "None yet: double-click the clip or use Edit or replace…"
+        if job.line_breaks and (job.script_text or job.script_path):
+            sc += "  + your line breaks"
+        self.p_script.configure(text=sc, style="PanelBold.TLabel" if (job.script_text or job.script_path)
+                                else "PanelBad.TLabel")
+        self._sync_fps_box(e)
+        last = e["result"].srt_path if e["result"] else next(
+            iter(core.previous_outputs(job.video, self.var_out.get().strip() or None)), "")
+        name = os.path.basename(last) if last else "Not synced yet"
+        if len(name) > 46:                      # keep the date/time end visible
+            name = name[:20] + "\u2026" + name[-25:]
+        self.p_last.configure(text=name)
+        self.p_show.configure(state="normal" if last else "disabled")
+        self._last_output = last
+        r = e["result"]
+        if r:
+            flagged = r.n_check + r.n_bad
+            self.p_result.configure(text=f"{flagged} to review" if flagged else "Done",
+                                    style="PanelCheck.TLabel" if flagged else "PanelOk.TLabel")
+            self.p_result_more.configure(text=f"\u00b7 {r.match_pct:.0f}% heard \u00b7 {len(r.cues)} subtitles")
+        elif e["status"].startswith(("Error", "Stopped")):
+            self.p_result.configure(text=e["status"], style="PanelBad.TLabel")
+            self.p_result_more.configure(text="")
+        else:
+            self.p_result.configure(text=e["status"] or ("Ready" if (job.script_text or job.script_path)
+                                                          else "Needs a script"), style="PanelBold.TLabel")
+            self.p_result_more.configure(text="")
+        again = bool(r) or e.get("synced_before")
+        self.p_resync.configure(text="\u21bb  Resync this clip" if again else "\u25b6  Sync this clip",
+                                state="normal" if (job.script_text or job.script_path) and not self._busy()
+                                else "disabled")
+
+    def edit_script(self):
+        """Double-click / Edit or replace…: paste or edit the script, or import a file instead."""
+        e = self._selected()
+        if not e:
+            return
+        if self._busy():
+            messagebox.showinfo("Syncing", "Wait for the current sync to finish (or press Stop) first.")
+            return
+        job = e["job"]
+        initial = job.script_text or ""
+        if not initial and job.script_path:
+            try:
+                initial = core.read_script_file(job.script_path)
+            except (OSError, core.SyncError) as ex:
+                log.warning("couldn't read the script to edit it: %s", ex)
+        dlg = PasteDialog(self, f"Script for {job.label()}", initial, allow_import=True)
+        self.wait_window(dlg)
+        if dlg.result_path:
+            job.script_path, job.script_text = dlg.result_path, None
+        elif dlg.result and not (job.script_path and dlg.result == initial.strip()):
+            job.script_text, job.script_path = dlg.result, None
+        else:
+            return                                   # cancelled, emptied or unchanged
+        job.line_breaks = None
+        e["result"] = None
+        self._refresh_row(e, status="")
+        self._list_changed()
+        self._show_panel()
+
+    def resync_selected(self):
+        e = self._selected()
+        if e and not self._busy() and (e["job"].script_path or e["job"].script_text):
+            self._run([e], self.current_settings())
+
+    # ------------------------------------------------------------ queue ops
     def _add_entry(self, video, script=None, text=None):
         for e in self.entries.values():
             if os.path.abspath(e["job"].video) == os.path.abspath(video):
@@ -723,24 +879,17 @@ class App(tk.Tk):
         self.entries[iid] = {"iid": iid, "job": job, "result": None, "status": "",
                              "synced_before": synced_before}
         self._refresh_row(self.entries[iid])
-        # read the clip's frame rate in the background (ffmpeg takes a moment per clip)
-        threading.Thread(target=lambda: self.q.put(("fps", iid, core.detect_fps(video))), daemon=True).start()
-
-    def _fps_text(self, e):
-        f = e["job"].fps
-        if f is None:
-            if "detected_fps" not in e:
-                return "Auto"
-            d = e["detected_fps"]
-            return f"Auto \u00b7 {core.fps_name(d)}" if d else f"Auto \u00b7 no video ({self.v_fps.get()})"
-        return "Don't snap" if f == 0 else f"{core.fps_name(f)} (set)"
+        if not self.tree.selection():
+            self.tree.selection_set(iid)
+        # read the clip's frame rate, length and size in the background (ffmpeg takes a moment per clip)
+        threading.Thread(target=lambda: self.q.put(("probe", iid, core.probe_clip(video))), daemon=True).start()
 
     def set_clip_fps(self):
         e = self._selected()
         if not e:
             return
         v = self.var_clip_fps.get()
-        e["job"].fps = None if v == AUTO_FPS else FRAME_RATES.get(v, 0.0)
+        e["job"].fps = None if v.startswith("Auto") else FRAME_RATES.get(v, 0.0)
         self._refresh_row(e)
 
     def _refresh_row(self, e, status=None, match=None):
@@ -764,10 +913,10 @@ class App(tk.Tk):
             tag = "review" if "review" in st else "ok"
         elif st.startswith("Error") or st.startswith("Stopped"):
             tag = "error"
-        vals = (job.label(), sc, self._fps_text(e), st,
-                match if match is not None else self.tree.set(e["iid"], "match"))
-        self.tree.item(e["iid"], values=vals, tags=(tag,) if tag else ())
+        self.tree.item(e["iid"], values=(job.label(), st), tags=(tag,) if tag else ())
         self._update_run_button()
+        if self.tree.selection() == (e["iid"],):
+            self._show_panel()
 
     def _update_run_button(self):
         """'Resync' (restart icon) once every clip that would run has been synced before;
@@ -857,7 +1006,7 @@ class App(tk.Tk):
             first = missing[0]["job"].label()
             more = f" and {len(missing) - 1} more" if len(missing) > 1 else ""
             return ("dot_wait", "Clips loaded",
-                    f"Waiting for a script: {first}{more}. Select it, then Choose script file… or Paste script…",
+                    f"Waiting for a script: {first}{more}. Double-click a clip to add its script.",
                     "", False)
         n = len(self.entries)
         return "dot_wait", "Ready", f"{n} clip(s) ready. Press {self.btn_run.cget('text').split()[-1]} or Ctrl+Enter.", \
@@ -918,33 +1067,6 @@ class App(tk.Tk):
     def _selected(self):
         sel = self.tree.selection()
         return self.entries.get(sel[0]) if sel else None
-
-    def set_script(self):
-        e = self._selected()
-        if not e:
-            messagebox.showinfo("Pick a clip", "Select a clip in the list first.")
-            return
-        p = filedialog.askopenfilename(
-            title="Choose the writer's script",
-            filetypes=[("Scripts", "*.docx *.txt *.md *.srt"), ("All files", "*.*")])
-        if p:
-            e["job"].script_path, e["job"].script_text, e["job"].line_breaks = p, None, None
-            e["result"] = None
-            self._refresh_row(e, status="")
-            self._after_add()
-
-    def paste_script(self):
-        e = self._selected()
-        if not e:
-            messagebox.showinfo("Pick a clip", "Select a clip in the list first.")
-            return
-        dlg = PasteDialog(self, f"Script for {e['job'].label()}", e["job"].script_text or "")
-        self.wait_window(dlg)
-        if dlg.result:
-            e["job"].script_text, e["job"].script_path, e["job"].line_breaks = dlg.result, None, None
-            e["result"] = None
-            self._refresh_row(e, status="")
-            self._after_add()
 
     def remove_selected(self):
         e = self._selected()
@@ -1275,11 +1397,11 @@ class App(tk.Tk):
                             if self._run_info:
                                 self._run_info["errors"].append((e["job"].label(), st[len("Error: "):]))
                         self._clip_finished(iid)
-                elif kind == "fps":
-                    _, iid, f = m
+                elif kind == "probe":
+                    _, iid, info = m
                     e = self.entries.get(iid)
                     if e:
-                        e["detected_fps"] = f
+                        e["probe"], e["detected_fps"] = info, info["fps"]
                         self._refresh_row(e)
                 elif kind == "done":
                     _, iid, res = m
@@ -1306,6 +1428,7 @@ class App(tk.Tk):
                              "stopped" if self.cancel.is_set() else "finished",
                              time.monotonic() - getattr(self, "_batch_t0", time.monotonic()), done, m[1])
                     self._finish_status(m[1])
+                    self._show_panel()
         except queue.Empty:
             pass
         self.after(100, self._poll)
@@ -1320,8 +1443,9 @@ class App(tk.Tk):
 
     def show_selected(self):
         e = self._selected()
-        self._sync_fps_box(e)
+        self._show_panel()
         if not e:
+            self.clear_review()
             return
         if e["result"]:
             self.show_result(e)
@@ -1332,14 +1456,17 @@ class App(tk.Tk):
 
     def _sync_fps_box(self, e):
         if not e:
-            self.var_clip_fps.set(AUTO_FPS)
-            self.cb_clip_fps.config(state="disabled")
             return
         f = e["job"].fps
-        name = AUTO_FPS if f is None else next(
-            (k for k, v in FRAME_RATES.items() if abs(v - f) < 1e-6), AUTO_FPS)
-        self.var_clip_fps.set(name)
-        self.cb_clip_fps.config(state="readonly")
+        if f is None:
+            d = e.get("detected_fps")
+            auto = f"Auto ({core.fps_name(d)}, from the clip)" if d else (
+                f"Auto (no video: {self.v_fps.get()})" if "detected_fps" in e else AUTO_FPS)
+            self.cb_clip_fps.configure(values=[auto] + list(FRAME_RATES))
+            self.var_clip_fps.set(auto)
+            return
+        self.cb_clip_fps.configure(values=[AUTO_FPS] + list(FRAME_RATES))
+        self.var_clip_fps.set(next((k for k, v in FRAME_RATES.items() if abs(v - f) < 1e-6), AUTO_FPS))
 
     def show_result(self, e):
         r = e["result"]
