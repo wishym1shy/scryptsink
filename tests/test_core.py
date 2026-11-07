@@ -273,6 +273,10 @@ def test_clip_frame_rate():
     assert detect_fps(clips["b.mp4"]) == 30000 / 1001
     assert detect_fps(clips["c.mp4"]) == 24000 / 1001
     assert detect_fps(wav) is None and detect_fps(os.path.join(d, "missing.mp4")) is None
+    info = probe_clip(clips["a.mp4"])
+    assert (info["width"], info["height"]) == (32, 32) and abs(info["duration"] - 1.0) < 0.1, info
+    winfo = probe_clip(wav)
+    assert winfo["fps"] is None and winfo["width"] is None and abs(winfo["duration"] - 1.0) < 0.1, winfo
     s = Settings(fps=30.0)
     assert clip_fps(Job(clips["a.mp4"]), s) == (25.0, "read from the clip")
     assert clip_fps(Job(wav), s) == (30.0, "clip has no video; default used")
