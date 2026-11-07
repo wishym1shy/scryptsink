@@ -36,7 +36,7 @@ Keep wording in docs, comments and test data generic.
 
 ## What this project is
 
-Script Sync takes a clip and the writer's script and produces a timed `.srt` whose text is the script,
+ScryptSink (formerly "Script Sync") takes a clip and the writer's script and produces a timed `.srt` whose text is the script,
 exactly as written, with timing taken from the audio. Desktop GUI (tkinter) plus a command line.
 
 - `scriptsync_core.py` - engine. Standard library only for matching/cue building; the speech model

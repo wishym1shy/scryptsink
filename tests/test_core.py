@@ -397,9 +397,25 @@ def test_log_rotates():
         lg.info("filler line %d %s", i, "x" * 40)
     for h in lg.handlers: h.flush()
     files = sorted(os.listdir(d))
-    assert files[:2] == ["scriptsync.log", "scriptsync.log.1"] and len(files) <= 1 + LOG_BACKUPS, files
+    assert files[:2] == ["scryptsink.log", "scryptsink.log.1"] and len(files) <= 1 + LOG_BACKUPS, files
     assert all(os.path.getsize(os.path.join(d, f)) <= LOG_MAX_BYTES + 200 for f in files)
     setup_logging(directory=tempfile.mkdtemp())
+
+
+def test_data_folder_moves_to_new_name():
+    """Renamed from Script Sync: the old ScriptSync folder (settings, transcripts, logs) moves over once."""
+    import tempfile
+    base = tempfile.mkdtemp()
+    old = os.path.join(base, "ScriptSync"); os.makedirs(os.path.join(old, "cache"))
+    open(os.path.join(old, "settings.json"), "w").write("{}")
+    new = data_folder(base)
+    assert new == os.path.join(base, "ScryptSink")
+    assert os.path.exists(os.path.join(new, "settings.json")) and os.path.isdir(os.path.join(new, "cache"))
+    assert not os.path.exists(old)
+    os.makedirs(old)                                   # an old folder appearing later is left alone
+    assert data_folder(base) == new and os.path.isdir(old)
+    fresh = tempfile.mkdtemp()                          # nothing old: just the new name
+    assert data_folder(fresh) == os.path.join(fresh, "ScryptSink")
 
 
 def test_decode_audio_without_pyav():

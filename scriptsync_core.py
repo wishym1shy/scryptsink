@@ -1,5 +1,5 @@
 """
-Script Sync - core engine
+ScryptSink - core engine
 =========================
 By wishym1shy  (https://github.com/wishym1shy)
 
@@ -43,7 +43,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
-APP_NAME = "Script Sync"
+APP_NAME = "ScryptSink"
 APP_AUTHOR = "wishym1shy"
 APP_URL = "https://github.com/wishym1shy/scryptsink"
 APP_VERSION = "0.1.0"
@@ -62,9 +62,25 @@ LOG_MAX_BYTES = 1_000_000
 LOG_BACKUPS = 4
 
 
+OLD_DATA_FOLDER = "ScriptSync"        # the app's name before it became ScryptSink
+DATA_FOLDER = "ScryptSink"
+
+
+def data_folder(base: str) -> str:
+    """<base>/ScryptSink, moving <base>/ScriptSync (the old name) there the first time, so settings,
+    saved transcripts and logs survive the rename."""
+    new, old = os.path.join(base, DATA_FOLDER), os.path.join(base, OLD_DATA_FOLDER)
+    if not os.path.exists(new) and os.path.isdir(old):
+        try:
+            os.rename(old, new)
+        except OSError:
+            return old                      # couldn't move it (in use?): keep using the old one
+    return new
+
+
 def app_data_dir() -> str:
     base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".cache")
-    return os.path.join(base, "ScriptSync")
+    return data_folder(base)
 
 
 def log_dir() -> str:
@@ -72,7 +88,7 @@ def log_dir() -> str:
 
 
 def log_path() -> str:
-    return os.path.join(log_dir(), "scriptsync.log")
+    return os.path.join(log_dir(), "scryptsink.log")
 
 
 def register_private_path(path: Optional[str], label: str):
@@ -121,7 +137,7 @@ def setup_logging(directory: Optional[str] = None, console: bool = False) -> Opt
         ch.setLevel(logging.INFO)
         lg.addHandler(ch)
     d = directory or log_dir()
-    path = os.path.join(d, "scriptsync.log")
+    path = os.path.join(d, "scryptsink.log")
     try:
         os.makedirs(d, exist_ok=True)
         fh = logging.handlers.RotatingFileHandler(path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS,
@@ -1036,7 +1052,7 @@ def make_report(job_label: str, script_label: str, res: SyncResult, s: Settings,
         L.append(f"{short_tc(a)} - {short_tc(b)}  \"{t}\"")
     L.append("")
     L.append("Reminder: the SRT supplies text and timing only. Style it in your editor.")
-    L.append("Made with Script Sync by wishym1shy")
+    L.append(f"Made with {APP_NAME} by {APP_AUTHOR}")
     return "\r\n".join(L) + "\r\n"
 
 
@@ -1044,8 +1060,7 @@ def make_report(job_label: str, script_label: str, res: SyncResult, s: Settings,
 # Speech recognition
 # --------------------------------------------------------------------------
 def cache_dir() -> str:
-    base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".cache")
-    d = os.path.join(base, "ScriptSync", "cache")
+    d = os.path.join(app_data_dir(), "cache")
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -1436,7 +1451,7 @@ def _run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> S
 # Output file names
 # --------------------------------------------------------------------------
 _NTSC = {24000 / 1001: "23.976", 30000 / 1001: "29.97", 60000 / 1001: "59.94"}
-# Everything Script Sync writes: "<clip>_synced_..." plus the old "<clip>.synced.srt" style.
+# Everything ScryptSink writes: "<clip>_synced_..." plus the old "<clip>.synced.srt" style.
 OUTPUT_FILE = re.compile(r"(_synced_.*|\.synced)\.srt$|\.review\.txt$|\.words\.(srt|json)$", re.I)
 
 
