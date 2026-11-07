@@ -47,10 +47,21 @@ def score(max_chars):
     return cues, joins, glue, orphans, bad
 
 
+# --check (used by CI): today's splitter scores 0 / 0 / 0 at both widths; allow a little slack
+LIMITS = {"two sentences in one cue": 0, "ends on a glue word": 1, "lone words": 1}
+
 if __name__ == "__main__":
+    failed = False
     for mc in (32, 40):
         cues, j, g, o, bad = score(mc)
         print(f"max_chars={mc}: {cues} cues | two sentences in one cue: {j} | ends on a glue word: {g} | lone words: {o}")
         if "-v" in sys.argv:
             for b in bad:
                 print("   " + b)
+        for (name, limit), value in zip(LIMITS.items(), (j, g, o)):
+            if value > limit:
+                print(f"FAIL at max_chars={mc}: {name} = {value} (limit {limit})")
+                failed = True
+    if "--check" in sys.argv:
+        print("FAIL" if failed else "OK: within limits")
+        sys.exit(1 if failed else 0)

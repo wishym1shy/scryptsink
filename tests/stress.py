@@ -29,4 +29,13 @@ def run(seed, sub=0.08, dele=0.04):
 allerr = []
 for seed in range(200): allerr += run(seed)
 allerr.sort()
-print(f"{len(allerr)} words | median {statistics.median(allerr)*1000:.0f} ms | p90 {allerr[int(.9*len(allerr))]*1000:.0f} ms | p99 {allerr[int(.99*len(allerr))]*1000:.0f} ms | >1s: {sum(e>1 for e in allerr)/len(allerr)*100:.2f}%")
+median = statistics.median(allerr)
+over1s = sum(e > 1 for e in allerr) / len(allerr) * 100
+print(f"{len(allerr)} words | median {median*1000:.0f} ms | p90 {allerr[int(.9*len(allerr))]*1000:.0f} ms | p99 {allerr[int(.99*len(allerr))]*1000:.0f} ms | >1s: {over1s:.2f}%")
+# --check (used by CI): fail when timing gets noticeably worse than today's ~30 ms median / ~0.3% over 1 s
+if "--check" in sys.argv:
+    MAX_MEDIAN_MS, MAX_OVER_1S_PCT = 45, 1.0
+    if median * 1000 > MAX_MEDIAN_MS or over1s > MAX_OVER_1S_PCT:
+        print(f"FAIL: limits are median <= {MAX_MEDIAN_MS} ms and <= {MAX_OVER_1S_PCT}% of words over 1 s")
+        sys.exit(1)
+    print("OK: within limits")

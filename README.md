@@ -228,6 +228,20 @@ is about 30 ms. See [`CLAUDE.md`](CLAUDE.md) for contributor and AI-agent rules.
 All changes go through pull requests, and **every PR is reviewed and merged by the repository owner by hand**.
 Please don't expect (or script) automated merging.
 
+Every pull request is checked automatically (**Actions > CI**): the unit tests, the timing-accuracy and cut-quality
+checks on Windows, macOS and Linux with Python 3.9 and 3.12, a Python 3.9 compatibility check, and a GUI smoke test.
+
+### Releases (maintainer)
+
+Releases are **manual**, so one version can bundle any number of merged fixes and features:
+
+1. Bump `APP_VERSION` in `scriptsync_core.py` in a pull request, and merge it.
+2. **Actions > Release > Run workflow**, enter the same version (e.g. `0.2.0`).
+3. It checks the version, runs the tests again, and creates a **draft** release `v0.2.0` with a ready-to-download
+   `ScryptSink-0.2.0.zip` and notes listing every pull request merged since the last release, grouped by label
+   (`enhancement` = New features, `bug` = Fixes, `documentation`).
+4. Read the draft on the Releases page, edit the notes if you like, and press **Publish**.
+
 ## License
 
 [MIT](LICENSE) &copy; 2026 wishym1shy

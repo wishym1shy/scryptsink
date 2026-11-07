@@ -1,0 +1,75 @@
+# Checks every pull request (and main) before it can ship.
+# Runs the same tests CLAUDE.md asks for, on the three systems people use the app on.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        python: ["3.9", "3.12"]      # oldest supported, and a current one
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install test dependencies (no speech model needed)
+        run: python -m pip install numpy imageio-ffmpeg
+      - name: Unit tests
+        run: python tests/test_core.py
+      - name: Timing accuracy (simulated speech-model errors)
+        run: python tests/stress.py --check
+      - name: Subtitle cut quality
+        run: python tests/cuts.py --check
+
+  compatibility:
+    name: Python 3.9 compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install vermin
+      - name: No syntax or library calls newer than Python 3.9
+        run: vermin -t=3.9- --no-tips --violations scriptsync_core.py scriptsync_gui.py tests/
+
+  gui:
+    name: GUI smoke test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tkinter, a virtual display and tools to make a test clip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb ffmpeg espeak-ng imagemagick
+      - name: Make a synthetic test clip
+        run: python3 tests/make_test_clip.py "$RUNNER_TEMP/clip"
+      - name: Sync it through the real window (speech model replaced by a stand-in)
+        env:
+          SCRIPTSYNC_ASR_PLUGIN: tests/fake_plugin.py
+          LOCALAPPDATA: ${{ runner.temp }}/appdata
+        run: xvfb-run -a -s "-screen 0 1280x1000x24" python3 tests/gui_smoke.py "$RUNNER_TEMP/clip" "$RUNNER_TEMP/gui.png"
+      - name: Keep the screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-screenshot
+          path: ${{ runner.temp }}/gui.png
+          if-no-files-found: ignore
