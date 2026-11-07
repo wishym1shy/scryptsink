@@ -418,6 +418,31 @@ def test_data_folder_moves_to_new_name():
     assert data_folder(fresh) == os.path.join(fresh, "ScryptSink")
 
 
+def test_recut_from_saved_word_timings():
+    """Issue #13: changing the limits re-cuts from the word timings, identical to a fresh sync with them."""
+    import tempfile
+    script = ("If you have been waiting for the right moment to upgrade your kitchen, this is it. "
+              "Every cabinet in the showroom is on sale until the end of the month.")
+    asr, _, end = speak([script])
+    s40 = Settings()
+    base = sync_words(parse_script(script, s40), asr, end, s40)
+    base.settings = s40
+    d = tempfile.mkdtemp()
+    base.meta = {"video": os.path.join(d, "clip.mp4"), "label": "clip.mp4", "script_label": "x", "n_lines": 1,
+                 "n_words": 10, "lang": "en", "out_dir": d, "own_line_breaks": False}
+    t = time.time()
+    short = recut(base, 18, 4)
+    assert time.time() - t < 0.5
+    fresh = sync_words(parse_script(script, Settings(max_chars=18, max_words=4)), asr, end,
+                       Settings(max_chars=18, max_words=4))
+    assert [(c.text, c.start, c.end) for c in short.cues] == [(c.text, c.start, c.end) for c in fresh.cues]
+    assert all(len(c.text) <= 18 or len(c.text.split()) == 1 for c in short.cues)
+    assert len(base.cues) < len(short.cues) and base.settings.max_chars == 40, "the original is untouched"
+    write_result(short)
+    assert os.path.basename(short.srt_path).startswith("clip_synced_18ch_4w_") and os.path.exists(short.srt_path)
+    assert os.path.exists(short.report_path) and short.srt_text == open(short.srt_path, encoding="utf-8", newline="").read()
+
+
 def test_decode_audio_without_pyav():
     """Regression: faster-whisper's own loader calls av.open(metadata_errors=...), which crashes on older
     PyAV. decode_audio must work (via ffmpeg) even if PyAV can't be imported at all."""
