@@ -1,5 +1,5 @@
 """
-Script Sync - desktop app (no command line needed)
+ScryptSink - desktop app (no command line needed)
 By wishym1shy  (https://github.com/wishym1shy)
 
 Add clips (and their scripts), press Sync, get a timed .srt next to each clip
@@ -202,7 +202,7 @@ GITHUB_MARK = {
 
 def settings_path():
     base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".config")
-    d = os.path.join(base, "ScriptSync")
+    d = core.data_folder(base)
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, "settings.json")
 
@@ -682,7 +682,7 @@ class App(tk.Tk):
         self._gh_img = self._github_image()
         lbl = self._gh_lbl = ttk.Label(parent, image=self._gh_img, cursor="hand2", padding=4)
         lbl.bind("<Button-1>", lambda e: webbrowser.open(core.APP_URL))
-        _Tooltip(lbl, f"Script Sync on GitHub \u2014 by {core.APP_AUTHOR}")
+        _Tooltip(lbl, f"{core.APP_NAME} on GitHub \u2014 by {core.APP_AUTHOR}")
         return lbl
 
     def _toggle_adv(self):
@@ -1270,7 +1270,7 @@ class App(tk.Tk):
             "1. Paste it into the AI tool you already use.\n"
             "2. Copy its answer (the script with new line breaks).\n"
             "3. Click 'Apply line breaks…' and paste it there.\n\n"
-            "Script Sync checks that no words were changed and re-times it from the saved transcript."))
+            f"{core.APP_NAME} checks that no words were changed and re-times it from the saved transcript."))
 
     def apply_line_breaks(self):
         e = self._result_entry()

@@ -12,7 +12,7 @@ if not defined PY (
 if not defined PY goto nopython
 
 echo.
-echo  First-time setup for Script Sync. This takes a few minutes and needs internet.
+echo  First-time setup for ScryptSink. This takes a few minutes and needs internet.
 echo  (It only happens once.)
 echo.
 %PY% -m venv .venv
