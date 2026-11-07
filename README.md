@@ -104,9 +104,11 @@ python -m venv .venv
 ## Using the app
 
 1. **Add clips** or **Add a folder**. A script next to its clip with the same name
-   (`clip.mp4` + `clip.docx` / `.txt` / `.md` / `.srt`) is paired automatically; otherwise select the row and
-   **Choose script file** or **Paste script**.
-2. Press **Sync**.
+   (`clip.mp4` + `clip.docx` / `.txt` / `.md` / `.srt`) is paired automatically. Otherwise **double-click the
+   clip** (or **Edit or replace…** in the panel on the right) to paste its script, or use
+   **Import .txt / .srt instead…** in that window to pick a file.
+2. Press **Sync** (all clips) or **Sync this clip** in the panel. The panel shows the selected clip's script,
+   frame rate, its last subtitle file and the result.
 3. Next to each clip (or in the folder you pick) you get a subtitle file and its review sheet, named after the
    clip and the settings used, plus the date and time of the sync:
    - `clipname_synced_40ch_0w_30fps_2026-11-06_14-32-05.srt`

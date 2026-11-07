@@ -1182,32 +1182,50 @@ def _normalize_fps(f: float) -> float:
     return round(f, 3)
 
 
-def detect_fps(path: str) -> Optional[float]:
-    """A clip's frame rate, read with ffmpeg. None for audio-only files (cover art doesn't count)
-    or when it can't be read."""
+_DUR_RE = re.compile(r"Duration: (\d+):(\d\d):(\d\d(?:\.\d+)?)")
+_RES_RE = re.compile(r"Stream #[^\n]*?Video:(?![^\n]*attached pic)[^\n]*?, (\d{2,5})x(\d{2,5})")
+
+
+def probe_clip(path: str) -> dict:
+    """A clip's frame rate, length and picture size, read with ffmpeg (one call, cached):
+    {"fps": float|None, "duration": float|None, "width": int|None, "height": int|None}.
+    fps/width/height are None for audio-only files (cover art doesn't count)."""
+    info = {"fps": None, "duration": None, "width": None, "height": None}
     try:
         st = os.stat(path)
     except OSError:
-        return None
+        return info
     key = (os.path.abspath(path), st.st_size, int(st.st_mtime))
     if key in _fps_cache:
-        return _fps_cache[key]
-    fps = None
+        return dict(_fps_cache[key])
     ff = find_ffmpeg()
     if ff:
         kw = {"creationflags": 0x08000000} if os.name == "nt" else {}   # no console flash on Windows
         try:
             p = subprocess.run([ff, "-hide_banner", "-nostdin", "-i", path], capture_output=True,
                                timeout=30, **kw)
-            m = _FPS_RE.search(p.stderr.decode("utf-8", "replace"))
+            err = p.stderr.decode("utf-8", "replace")
+            m = _FPS_RE.search(err)
             if m:
                 f = float(m.group(1)) * (1000 if m.group(2) else 1)
                 if 1 <= f <= 1000:
-                    fps = _normalize_fps(f)
+                    info["fps"] = _normalize_fps(f)
+            m = _DUR_RE.search(err)
+            if m:
+                info["duration"] = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+            m = _RES_RE.search(err)
+            if m:
+                info["width"], info["height"] = int(m.group(1)), int(m.group(2))
         except (OSError, subprocess.SubprocessError):
-            pass
-    _fps_cache[key] = fps
-    return fps
+            log.debug("probe failed for %s", os.path.basename(path), exc_info=True)
+    _fps_cache[key] = dict(info)
+    return info
+
+
+def detect_fps(path: str) -> Optional[float]:
+    """A clip's frame rate, read with ffmpeg. None for audio-only files (cover art doesn't count)
+    or when it can't be read."""
+    return probe_clip(path)["fps"]
 
 
 def fps_name(fps: float) -> str:
