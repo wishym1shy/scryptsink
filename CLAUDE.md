@@ -96,5 +96,11 @@ SCRIPTSYNC_ASR_PLUGIN=tests/fake_plugin.py xvfb-run -a python tests/gui_smoke.py
 - If two open PRs touch the same lines, keep them independent anyway. After the owner merges one, update
   the other branch by merging `origin/main` into it (not rebasing, which would need a force-push) and fix
   any conflicts there, so the owner never has to.
+- **CI must pass** (Actions > CI: tests on Windows/macOS/Linux, Python 3.9 + 3.12, 3.9 compatibility, GUI smoke
+  test). If a check fails, fix it with follow-up commits on the same branch; never weaken a check or its limits to
+  make a PR pass without saying so and why in the PR.
+- Label PRs `enhancement`, `bug` or `documentation`: release notes are grouped by these labels.
+- **Releases are manual and the owner's decision.** Agents never run the Release workflow, create tags or
+  releases, or publish a draft. Bumping `APP_VERSION` is a normal PR, made only when the owner asks.
 - Do not add a dependency without saying why in the PR.
 - Never leave test media or generated `.srt` files in the tree (`.gitignore` covers them).

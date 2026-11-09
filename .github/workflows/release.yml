@@ -1,0 +1,81 @@
+# Releases are MANUAL: merged pull requests collect on main, and a new version is made only when the
+# owner runs this workflow (Actions > Release > Run workflow). One release can carry many fixes/features.
+#
+# Before running it: bump APP_VERSION in scriptsync_core.py in a normal pull request and merge it.
+# The release is created as a draft by default, so the notes can be read and edited before publishing.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, e.g. 0.2.0 (must equal APP_VERSION in scriptsync_core.py on main)"
+        required: true
+        type: string
+      draft:
+        description: "Create as a draft (read the notes, then press Publish on GitHub)"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      DRAFT: ${{ inputs.draft }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the version
+        run: |
+          python - <<'PY'
+          import os, re, subprocess, sys
+          v = os.environ["VERSION"].strip().lstrip("v")
+          if not re.fullmatch(r"\d+\.\d+\.\d+", v):
+              sys.exit(f"'{v}' is not a version like 0.2.0")
+          src = open("scriptsync_core.py", encoding="utf-8").read()
+          app = re.search(r'^APP_VERSION = "([^"]+)"', src, re.M).group(1)
+          if app != v:
+              sys.exit(f"APP_VERSION on main is {app}, not {v}. Bump it in a pull request first, merge, then run this again.")
+          if subprocess.run(["git", "rev-parse", "-q", "--verify", f"refs/tags/v{v}"], capture_output=True).returncode == 0:
+              sys.exit(f"v{v} has already been released. Pick a new version.")
+          print(f"Releasing v{v}")
+          PY
+
+      - name: Run the tests once more
+        run: |
+          python -m pip install numpy imageio-ffmpeg
+          python tests/test_core.py
+          python tests/stress.py --check
+          python tests/cuts.py --check
+
+      - name: Build the download (the files a user needs, in one folder)
+        run: |
+          V="${VERSION#v}"
+          mkdir -p dist
+          git archive --format=zip --prefix="ScryptSink-$V/" -o "dist/ScryptSink-$V.zip" HEAD -- \
+            scriptsync_core.py scriptsync_gui.py requirements.txt run_windows.bat run_mac.command README.md LICENSE
+          unzip -l "dist/ScryptSink-$V.zip"
+
+      - name: Create the release (notes list every pull request merged since the last one)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${VERSION#v}"
+          FLAGS=""
+          if [ "$DRAFT" = "true" ]; then FLAGS="--draft"; fi
+          gh release create "v$V" "dist/ScryptSink-$V.zip" --target "$(git rev-parse HEAD)" \
+            --title "ScryptSink $V" --generate-notes $FLAGS
