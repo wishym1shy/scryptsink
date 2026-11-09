@@ -63,6 +63,10 @@ Design rules that should not regress:
 - Script text that was never heard is **left out of the SRT but listed in the review report**; nothing disappears silently.
 - Speech that is not in the script is reported, not subtitled.
 - Python 3.9+ compatible; the GUI must work with the stock Windows python.org install (tkinter included).
+- The launchers only accept Python `PYTHON_MIN`..`PYTHON_MAX` (`scriptsync_core.py`): the versions the speech
+  engine's dependencies have ready-made packages for. To change the range, update the constant, both launchers
+  and the README together; `tests/test_core.py` checks they agree, and CI's "Installs on every supported Python"
+  job checks the range really installs (and says when the next Python does).
 
 ## Testing
 
@@ -96,7 +100,7 @@ SCRIPTSYNC_ASR_PLUGIN=tests/fake_plugin.py xvfb-run -a python tests/gui_smoke.py
 - If two open PRs touch the same lines, keep them independent anyway. After the owner merges one, update
   the other branch by merging `origin/main` into it (not rebasing, which would need a force-push) and fix
   any conflicts there, so the owner never has to.
-- **CI must pass** (Actions > CI: tests on Windows/macOS/Linux, Python 3.9 + 3.12, 3.9 compatibility, GUI smoke
+- **CI must pass** (Actions > CI: tests on Windows/macOS/Linux, Python 3.9 + 3.14, 3.9 compatibility, installs on every supported Python, GUI smoke
   test). If a check fails, fix it with follow-up commits on the same branch; never weaken a check or its limits to
   make a PR pass without saying so and why in the PR.
 - Label PRs `enhancement`, `bug` or `documentation`: release notes are grouped by these labels.

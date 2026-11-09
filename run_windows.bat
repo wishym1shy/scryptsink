@@ -6,6 +6,8 @@ rem Setup counts as finished only when this marker exists. It is written last, a
 rem worked, and holds a copy of requirements.txt, so an updated app re-runs the install too (#12).
 set "MARK=.venv\setup-complete.txt"
 set "RETRIED="
+rem Python versions ScryptSink can install on. Keep in step with PYTHON_MIN/PYTHON_MAX in scriptsync_core.py.
+set "PYOK=import sys; sys.exit(not (3,9) <= sys.version_info[:2] <= (3,14))"
 if not exist ".venv\Scripts\pythonw.exe" goto setup
 if not exist "%MARK%" goto setup
 fc /b "%MARK%" requirements.txt >nul 2>nul
@@ -24,13 +26,12 @@ echo  Setup didn't finish last time, or ScryptSink was updated. Finishing it now
 echo  Please keep this window open until ScryptSink opens.
 echo.
 if exist "%MARK%" del /q "%MARK%"
-rem Reuse a .venv whose Python works (saves re-downloading); otherwise start it again.
-if exist ".venv\Scripts\python.exe" ".venv\Scripts\python.exe" -c "import sys" >nul 2>nul && goto install
+rem Reuse a .venv whose Python works and is a supported version (saves re-downloading);
+rem otherwise start it again.
+if exist ".venv\Scripts\python.exe" ".venv\Scripts\python.exe" -c "%PYOK%" >nul 2>nul && goto install
 :fresh
 if exist ".venv" rmdir /s /q ".venv"
-set "PY="
-where py >nul 2>nul && set "PY=py -3"
-if not defined PY where python >nul 2>nul && set "PY=python"
+call :findpy
 if not defined PY goto nopython
 %PY% -m venv .venv
 if errorlevel 1 goto fail
@@ -48,6 +49,20 @@ if errorlevel 1 goto fail
 start "" ".venv\Scripts\pythonw.exe" scriptsync_gui.py
 exit /b 0
 
+:findpy
+rem Newest supported Python first, so a computer with several versions uses one that works.
+set "PY="
+set "ANYPY="
+where py >nul 2>nul && set "ANYPY=py"
+for %%V in (3.14 3.13 3.12 3.11 3.10 3.9) do (
+  if not defined PY py -%%V -c "%PYOK%" >nul 2>nul && set "PY=py -%%V"
+)
+if defined PY exit /b 0
+if not defined ANYPY where python >nul 2>nul && set "ANYPY=python"
+if not defined ANYPY exit /b 0
+if "%ANYPY%"=="python" python -c "%PYOK%" >nul 2>nul && set "PY=python"
+exit /b 0
+
 :broken
 rem Installed but won't import (an earlier install was cut off half-way): rebuild once from scratch.
 if defined RETRIED goto fail
@@ -59,8 +74,22 @@ goto fresh
 
 :nopython
 echo.
+if defined ANYPY goto wrongpython
 echo  Python is not installed yet.
-echo  1. Go to https://www.python.org/downloads/ and install Python 3.11 or newer.
+echo  1. Go to https://www.python.org/downloads/ and install Python 3.14.
+echo  2. On the first installer screen, tick "Add python.exe to PATH".
+echo  3. Then double-click this file again.
+echo.
+pause
+exit /b 1
+
+:wrongpython
+set "FOUNDV="
+for /f "delims=" %%v in ('%ANYPY% -c "import platform; print(platform.python_version())" 2^>nul') do set "FOUNDV=%%v"
+echo  ScryptSink can't use the Python on this computer (%FOUNDV%): part of the speech engine
+echo  isn't available for that version yet. ScryptSink works with Python 3.9 to 3.14.
+echo  1. Go to https://www.python.org/downloads/ and install Python 3.14
+echo     (under "Looking for a specific release?"). You can keep the other version.
 echo  2. On the first installer screen, tick "Add python.exe to PATH".
 echo  3. Then double-click this file again.
 echo.
