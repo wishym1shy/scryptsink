@@ -43,8 +43,13 @@ Nothing is dropped silently:
 
 ### 1. Install Python (once)
 
-Python 3.9 or newer from [python.org](https://www.python.org/downloads/). On Windows, tick
-**"Add python.exe to PATH"** on the first installer screen.
+**Python 3.14** from [python.org](https://www.python.org/downloads/) (any version from 3.9 to 3.14 works). On
+Windows, tick **"Add python.exe to PATH"** on the first installer screen.
+
+Don't pick a newer Python than 3.14 yet: part of the speech engine isn't available for it, so setup can't
+finish. The big download button on python.org may offer a newer one; scroll down to **Looking for a specific
+release?** and choose the newest 3.14. Already have a newer Python? Keep it and install 3.14 next to it; the
+launcher picks the one that works.
 
 ### 2. Download the whole project
 
@@ -246,7 +251,8 @@ All changes go through pull requests, and **every PR is reviewed and merged by t
 Please don't expect (or script) automated merging.
 
 Every pull request is checked automatically (**Actions > CI**): the unit tests, the timing-accuracy and cut-quality
-checks on Windows, macOS and Linux with Python 3.9 and 3.12, a Python 3.9 compatibility check, and a GUI smoke test.
+checks on Windows, macOS and Linux with Python 3.9 and 3.14, a Python 3.9 compatibility check, a check that the
+requirements install on every supported Python (3.9 to 3.14), and a GUI smoke test.
 
 ### Releases (maintainer)
 

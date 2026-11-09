@@ -491,6 +491,23 @@ def test_missing_package_resets_launcher_setup():
         sys.prefix, sys.base_prefix = old
 
 
+def test_launchers_accept_the_supported_pythons():
+    """Both launchers try exactly PYTHON_MIN..PYTHON_MAX, newest first, and check that same range."""
+    import re
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    want = [f"3.{m}" for m in range(PYTHON_MAX[1], PYTHON_MIN[1] - 1, -1)]
+    rng = f"({PYTHON_MIN[0]},{PYTHON_MIN[1]}) <= sys.version_info[:2] <= ({PYTHON_MAX[0]},{PYTHON_MAX[1]})"
+    bat = open(os.path.join(root, "run_windows.bat"), encoding="utf-8").read()
+    mac = open(os.path.join(root, "run_mac.command"), encoding="utf-8").read()
+    assert re.search(r"for %%V in \(([\d. ]+)\) do", bat).group(1).split() == want, "run_windows.bat"
+    assert re.search(r"for p in ((?:python3\.\d+ )+)python3; do", mac).group(1).split() == \
+        ["python" + v for v in want], "run_mac.command"
+    for name, text in (("run_windows.bat", bat), ("run_mac.command", mac)):
+        assert rng in text, f"{name} doesn't check {rng}"
+        assert f"Python 3.{PYTHON_MIN[1]} to 3.{PYTHON_MAX[1]}" in text, f"{name} message names another range"
+    assert "\r\n" in open(os.path.join(root, "run_windows.bat"), "rb").read().decode(), "bat must stay CRLF"
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
