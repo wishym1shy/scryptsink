@@ -24,6 +24,14 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
         python: ["3.9", "3.12"]      # oldest supported, and a current one
+        exclude:
+          # setup-python has no 3.9 build for the newest ubuntu-latest image (26.04);
+          # run the Linux 3.9 job on 24.04, which still has one.
+          - os: ubuntu-latest
+            python: "3.9"
+        include:
+          - os: ubuntu-24.04
+            python: "3.9"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
