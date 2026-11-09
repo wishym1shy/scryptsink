@@ -432,6 +432,15 @@ class App(tk.Tk):
                      arrowcolor=P["text"], lightcolor=P["btn"], darkcolor=P["btn"])
         st.map("Vertical.TScrollbar", background=[("active", P["btn_hover"])])
         st.configure("TSeparator", background=P["border"])
+        st.configure("Bar.TFrame", background=P["panel"], bordercolor=P["border"], relief="solid", borderwidth=1)
+        st.configure("BarBold.TLabel", background=P["panel"], foreground=P["text"], font=("Segoe UI", 10, "bold"))
+        st.configure("BarSub.TLabel", background=P["panel"], foreground=P["sub"])
+        st.configure("Horizontal.TScale", background=P["accent"], troughcolor=P["track"], bordercolor=P["border"],
+                     lightcolor=P["accent"], darkcolor=P["accent"])
+        st.configure("TMenubutton", background=P["btn"], foreground=P["text"], bordercolor=P["border"],
+                     lightcolor=P["btn"], darkcolor=P["btn"], arrowcolor=P["text"], padding=(10, 4))
+        st.map("TMenubutton", background=[("disabled", P["bg"]), ("active", P["btn_hover"])],
+               foreground=[("disabled", P["disabled"])])
         st.configure("Preset.Toolbutton", background=P["btn"], foreground=P["text"], bordercolor=P["border"],
                      lightcolor=P["btn"], darkcolor=P["btn"], padding=(12, 7), anchor="w", relief="solid",
                      borderwidth=1)
@@ -685,16 +694,46 @@ class App(tk.Tk):
         top.pack(fill="x", pady=(0, 6))
         self.summary = ttk.Label(top, text="Select a finished clip to see its subtitles.", style="Big.TLabel")
         self.summary.pack(side="left")
-        self.btn_rep = ttk.Button(top, text="Open review sheet", command=self.open_report, state="disabled")
-        self.btn_rep.pack(side="right")
-        self.btn_srt = ttk.Button(top, text="Show .srt in folder", command=self.open_srt, state="disabled")
-        self.btn_srt.pack(side="right", padx=6)
-        self.btn_breaks = ttk.Button(top, text="Apply line breaks\u2026", command=self.apply_line_breaks,
-                                     state="disabled")
-        self.btn_breaks.pack(side="right", padx=(6, 0))
-        self.btn_prompt = ttk.Button(top, text="Copy AI prompt", command=self.copy_prompt,
-                                     state="disabled")
-        self.btn_prompt.pack(side="right")
+        # the less-used actions live in one menu, to leave room for the re-cut controls
+        self.btn_more = ttk.Menubutton(top, text="More", state="disabled")
+        self.btn_more.pack(side="right")
+        menu = tk.Menu(self.btn_more, tearoff=False)
+        menu.add_command(label="Open review sheet", command=self.open_report)
+        menu.add_command(label="Show .srt in folder", command=self.open_srt)
+        menu.add_separator()
+        menu.add_command(label="Copy AI prompt", command=self.copy_prompt)
+        menu.add_command(label="Apply my own line breaks\u2026", command=self.apply_line_breaks)
+        self._theme_tk(menu, lambda m: m.configure(
+            background=P["field"], foreground=P["text"], activebackground=P["sel"],
+            activeforeground=P["sel_text"], disabledforeground=P["disabled"], relief="flat", borderwidth=1))
+        self.btn_more.configure(menu=menu)
+
+        # live re-cut: drag the limits, the subtitles re-cut instantly from the saved word timings (#13)
+        bar = ttk.Frame(vf, style="Bar.TFrame", padding=(12, 6))
+        bar.pack(fill="x", pady=(0, 6))
+        self.rc_chars = tk.DoubleVar(value=40)
+        self.rc_words = tk.IntVar(value=0)
+        ttk.Label(bar, text="Max characters", style="BarBold.TLabel").pack(side="left")
+        self.rc_scale = ttk.Scale(bar, from_=12, to=80, variable=self.rc_chars, length=int(200 * self.px),
+                                  command=lambda _v: self._recut_soon())
+        self.rc_scale.pack(side="left", padx=(8, 6))
+        self.rc_chars_lbl = ttk.Label(bar, text="40", style="BarBold.TLabel", width=3)
+        self.rc_chars_lbl.pack(side="left")
+        ttk.Label(bar, text="Max words", style="BarBold.TLabel").pack(side="left", padx=(12, 6))
+        self.rc_words_box = ttk.Spinbox(bar, from_=0, to=20, textvariable=self.rc_words, width=4,
+                                        command=self._recut_soon)
+        self.rc_words_box.pack(side="left")
+        self.rc_words_box.bind("<KeyRelease>", lambda e: self._recut_soon())
+        # buttons first, so a long message can never push them out of the bar
+        self.btn_save_cut = ttk.Button(bar, text="Save as new .srt", command=self.save_recut, state="disabled")
+        self.btn_save_cut.pack(side="right")
+        self.btn_undo_cut = ttk.Button(bar, text="Undo", command=self.undo_recut, state="disabled")
+        self.btn_undo_cut.pack(side="right", padx=(0, 6))
+        self.rc_info = ttk.Label(bar, style="BarSub.TLabel")
+        self.rc_info.pack(side="left", fill="x", expand=True, padx=(12, 8))
+        self._preview = None                      # re-cut result not saved yet (for the selected clip)
+        self._recut_job = None
+        self._set_recut_enabled(False)
 
         self.extra = ttk.Label(vf, style="Sub.TLabel", wraplength=1000, justify="left")
         self.extra.pack(side="bottom", anchor="w", pady=(6, 0))
@@ -1342,6 +1381,8 @@ class App(tk.Tk):
                           "flagged": 0}
         self.worker = threading.Thread(target=self._work, args=(todo, s), daemon=True)
         self.worker.start()
+        self._preview = None
+        self._set_recut_enabled(False)
         self._update_status()
         self.after(1000, self._tick)
 
@@ -1428,6 +1469,7 @@ class App(tk.Tk):
                              "stopped" if self.cancel.is_set() else "finished",
                              time.monotonic() - getattr(self, "_batch_t0", time.monotonic()), done, m[1])
                     self._finish_status(m[1])
+                    self.after(50, self._update_recut_bar)
                     self._show_panel()
         except queue.Empty:
             pass
@@ -1438,8 +1480,9 @@ class App(tk.Tk):
         self.ctree.delete(*self.ctree.get_children())
         self.summary.config(text="Select a finished clip to see its subtitles.")
         self.extra.config(text="")
-        for b in (self.btn_rep, self.btn_srt, self.btn_breaks, self.btn_prompt):
-            b.config(state="disabled")
+        self.btn_more.config(state="disabled")
+        self._preview = None
+        self._set_recut_enabled(False)
 
     def show_selected(self):
         e = self._selected()
@@ -1470,13 +1513,12 @@ class App(tk.Tk):
 
     def show_result(self, e):
         r = e["result"]
-        self.ctree.delete(*self.ctree.get_children())
-        for c in r.cues:
-            self.ctree.insert("", "end", tags=(c.level,), values=(
-                c.index, f"{core.short_tc(c.start)} → {core.short_tc(c.end)}",
-                {"ok": "OK", "check": "CHECK", "bad": "BAD"}[c.level], c.text, " | ".join(c.notes)))
-        self.summary.config(text=f"{len(r.cues)} subtitles:  {r.n_ok} OK   {r.n_check} check   {r.n_bad} bad   "
-                                 f"—  {r.match_pct:.0f}% of the script was heard")
+        self._preview = None
+        if r.settings:
+            self.rc_chars.set(r.settings.max_chars)
+            self.rc_words.set(r.settings.max_words)
+        self._render_cues(r)
+        self._update_recut_bar()
         bits = list(r.warnings)
         if r.fps_source:
             bits.append(f"Frame rate: {core.fps_name(r.fps)} ({r.fps_source})")
@@ -1487,12 +1529,102 @@ class App(tk.Tk):
             bits.append(f"Spoken but not in script ({len(r.off_script)}): " + "  •  ".join(
                 f"{core.short_tc(a)} \"{t[:40]}\"" for a, _b, t in r.off_script[:3]))
         self.extra.config(text="\n".join(bits))
-        for b in (self.btn_rep, self.btn_srt, self.btn_breaks, self.btn_prompt):
-            b.config(state="normal")
+        self.btn_more.config(state="normal")
         if r.words_json_path:
             bits.append(f"Word timings saved: {os.path.basename(r.words_json_path)}, "
                         f"{os.path.basename(r.words_srt_path)}")
             self.extra.config(text="\n".join(bits))
+
+    # ------------------------------------------------------------ live re-cut (#13)
+    def _render_cues(self, r, saved=None):
+        """Fill the subtitle list; with `saved`, mark subtitles that differ from it with a pencil."""
+        old = {c.text for c in saved.cues} if saved else None
+        self.ctree.delete(*self.ctree.get_children())
+        for c in r.cues:
+            n = f"\u270e {c.index}" if old is not None and c.text not in old else c.index
+            self.ctree.insert("", "end", tags=(c.level,), values=(
+                n, f"{core.short_tc(c.start)} → {core.short_tc(c.end)}",
+                {"ok": "OK", "check": "CHECK", "bad": "BAD"}[c.level], c.text, " | ".join(c.notes)))
+        self.summary.config(text=f"{len(r.cues)} subtitles:  {r.n_ok} OK   {r.n_check} check   {r.n_bad} bad   "
+                                 f"—  {r.match_pct:.0f}% of the script was heard")
+
+    def _set_recut_enabled(self, on):
+        for w in (self.rc_scale, self.rc_words_box):
+            w.state(["!disabled"] if on else ["disabled"])
+        if not on:
+            self.btn_save_cut.configure(state="disabled", style="TButton")
+            self.btn_undo_cut.configure(state="disabled")
+            self.rc_info.configure(text="")
+
+    def _recut_soon(self):
+        self.rc_chars_lbl.configure(text=str(int(round(self.rc_chars.get()))))
+        if self._recut_job:
+            self.after_cancel(self._recut_job)
+        self._recut_job = self.after(120, self._do_recut)
+
+    def _recut_values(self):
+        try:
+            return int(round(self.rc_chars.get())), max(0, int(self.rc_words.get()))
+        except (tk.TclError, ValueError):
+            return None
+
+    def _do_recut(self):
+        self._recut_job = None
+        e = self._selected()
+        vals = self._recut_values()
+        if not (e and e["result"] and e["result"].settings and vals) or self._busy():
+            return
+        saved = e["result"]
+        if vals == (saved.settings.max_chars, saved.settings.max_words):
+            self._preview = None
+            self._render_cues(saved)
+        else:
+            self._preview = core.recut(saved, *vals)
+            self._render_cues(self._preview, saved)
+        self._update_recut_bar()
+
+    def _update_recut_bar(self):
+        e = self._selected()
+        r = e["result"] if e else None
+        self.rc_chars_lbl.configure(text=str(int(round(self.rc_chars.get()))))
+        if not (r and r.settings) or self._busy():
+            self._set_recut_enabled(False)
+            return
+        if r.meta.get("own_line_breaks"):
+            self._set_recut_enabled(False)
+            self.rc_info.configure(text="Using your own line breaks (More > Apply my own line breaks to change them).")
+            return
+        self._set_recut_enabled(True)
+        if self._preview:
+            n, was = len(self._preview.cues), len(r.cues)
+            self.rc_info.configure(text=f"Re-cut: {n} subtitles (was {was}). Not saved yet.")
+            self.btn_save_cut.configure(state="normal", style="Accent.TButton")
+            self.btn_undo_cut.configure(state="normal")
+        else:
+            self.rc_info.configure(text="Drag to re-cut instantly. Matches the saved file.")
+            self.btn_save_cut.configure(state="disabled", style="TButton")
+            self.btn_undo_cut.configure(state="disabled")
+
+    def undo_recut(self):
+        e = self._selected()
+        if e and e["result"]:
+            self.show_result(e)
+
+    def save_recut(self):
+        e = self._selected()
+        if not (e and self._preview):
+            return
+        try:
+            res = core.write_result(self._preview)
+        except core.SyncError as ex:
+            messagebox.showerror("Couldn't save", str(ex))
+            return
+        log.info("re-cut saved: %s", os.path.basename(res.srt_path))
+        e["result"] = res
+        flagged = res.n_check + res.n_bad
+        self._refresh_row(e, status=f"Done - {flagged} to review" if flagged else "Done ✔")
+        self.show_result(e)
+        self.rc_info.configure(text="Saved as a new .srt (the earlier one is kept).")
 
     def _result_entry(self):
         e = self._selected() or next((x for x in self.entries.values() if x["result"]), None)

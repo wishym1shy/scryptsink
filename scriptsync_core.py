@@ -299,6 +299,8 @@ class SyncResult:
     words_srt_path: str = ""
     fps: float = 0.0                               # frame rate the cue times were snapped to (0 = none)
     fps_source: str = ""                           # where that frame rate came from
+    settings: Optional["Settings"] = None          # the settings these cues were built with
+    meta: dict = field(default_factory=dict)       # clip/script details for the report and file names
 
 
 class Cancelled(Exception):
@@ -1452,16 +1454,40 @@ def _run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> S
         if long_lines:
             res.warnings.append(f"{long_lines} of your lines are longer than {s.max_chars} characters "
                                 "(kept as you wrote them).")
-    n_words = sum(len(l.split()) for l in lines)
     res.fps, res.fps_source = fps, fps_source
-    res.report_text = make_report(job.label(), script_label, res, s, len(lines), n_words,
-                                  lang or s.language)
-    out_dir = job.out_dir or os.path.dirname(os.path.abspath(job.video))
+    res.settings = s
+    res.meta = {"video": job.video, "label": job.label(), "script_label": script_label, "n_lines": len(lines),
+                "n_words": sum(len(l.split()) for l in lines), "lang": lang or s.language,
+                "out_dir": job.out_dir or os.path.dirname(os.path.abspath(job.video)),
+                "own_line_breaks": s_cues is not s}
+    progress(0.96, "Writing files")
+    write_result(res)
+    progress(1.0, "Done")
+    return res
+
+
+def recut(res: SyncResult, max_chars: int, max_words: int) -> SyncResult:
+    """The same clip re-cut with other limits, from the word timings already found: no listening and no
+    matching, so it takes milliseconds. Nothing is written; see write_result()."""
+    s = replace(res.settings, max_chars=max(int(max_chars), 10), max_words=max(int(max_words), 0))
+    cues, skipped, layout = build_cues(res.words, None, s, res.duration)
+    new = replace(res, cues=cues, skipped=skipped, layout=layout, settings=s, srt_path="", report_path="",
+                  words_json_path="", words_srt_path="",
+                  n_ok=sum(c.level == "ok" for c in cues), n_check=sum(c.level == "check" for c in cues),
+                  n_bad=sum(c.level == "bad" for c in cues))
+    new.srt_text = make_srt(cues)
+    return new
+
+
+def write_result(res: SyncResult) -> SyncResult:
+    """Write the .srt and review sheet (and word timings if asked) under a new, unique name."""
+    s, m = res.settings, res.meta
+    res.report_text = make_report(m["label"], m["script_label"], res, s, m["n_lines"], m["n_words"], m["lang"])
+    out_dir = m["out_dir"]
     os.makedirs(out_dir, exist_ok=True)
-    stem = unique_stem(out_dir, output_stem(job.video, s))
+    stem = unique_stem(out_dir, output_stem(m["video"], s))
     res.srt_path = os.path.join(out_dir, stem + ".srt")
     res.report_path = os.path.join(out_dir, stem + ".review.txt")
-    progress(0.96, "Writing files")
     try:
         log.info("output: %s (+ review sheet%s)", os.path.basename(res.srt_path),
                  ", word timings" if s.export_words else "")
@@ -1478,7 +1504,6 @@ def _run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> S
                 f.write(make_words_srt(res.words, s))
     except OSError as e:
         raise SyncError(f"Couldn't save to '{out_dir}': {e.strerror or e}")
-    progress(1.0, "Done")
     return res
 
 

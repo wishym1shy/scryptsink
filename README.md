@@ -163,15 +163,21 @@ Subtitle shape.
 
 Styling (font, size, position, colours) is done in your editor; the SRT carries text and timing only.
 
+### Re-cut after syncing
+
+Above the subtitle list, drag **Max characters** (or change **Max words**): the subtitles re-cut instantly from the
+word timings found during the sync, with no listening again. Changed subtitles are marked ✎. **Save as new .srt**
+writes it next to the earlier version (the name says the new limits); **Undo** goes back to the saved cut.
+
 ### Your own line breaks (by hand or with an AI tool)
 
-Prefer to decide the breaks yourself? After a sync, select the clip and click **Apply line breaks…**. The window
+Prefer to decide the breaks yourself? After a sync, select the clip and choose **More > Apply my own line breaks…**. The window
 opens with the current subtitles, one per line: move the line breaks, press **Use this script**, and the clip is
 re-timed straight away from its saved transcript (no new listening pass). Leave the window empty to go back to
 automatic cuts.
 
-To have an AI tool do it, click **Copy AI prompt**, paste it into the AI tool you already use, copy its answer and
-paste that into **Apply line breaks…**.
+To have an AI tool do it, choose **More > Copy AI prompt**, paste it into the AI tool you already use, copy its answer and
+paste that into **Apply my own line breaks…**.
 
 **ScryptSink never calls an AI service itself and has no place for an API key.** Everything it does runs on your
 machine; the AI step, if you want one, happens in your own tool, and ScryptSink only reads the text you paste back.
@@ -219,7 +225,7 @@ On the command line, add `-v` to also print the log to the terminal.
 - Numbers said differently from how they're written ("2025" vs "twenty twenty five") show up as CHECK.
 - Overlapping speakers are flagged rather than separated; there is no per-speaker colouring.
 - Cue cutting is rule-based: it can't tell an adjective from a noun, so it may still split something like
-  "last | year" when a line has to be cut and there is no better place. Fix those with **Apply line breaks…**.
+  "last | year" when a line has to be cut and there is no better place. Fix those by re-cutting, or with **More > Apply my own line breaks…**.
 - Not yet tested across many accents, noisy footage or long-form content.
 
 ## Development
