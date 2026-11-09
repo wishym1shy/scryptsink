@@ -137,20 +137,29 @@ which helps when footage was re-cut after the SRT was made.
 | CHECK | Some words not heard or heard differently (the note says which). Timing is usually fine; confirm text and sync. |
 | BAD | Most of the line wasn't found; its timing is a guess. Check by ear. |
 
-### Settings
+### Subtitle style
 
-- **Listening quality** - base / small (default) / medium / large-v3-turbo. Use a bigger one for noisy audio.
-- **Language** - auto-detect, English, Tagalog/Filipino, Spanish.
-- **Max characters** per subtitle - default 40; set it to match your caption style.
-- **Max words** per subtitle - 0 = no limit. Short-form video often looks best with 2-4.
-- **Frame rate** (per clip, in the clip toolbar) - subtitle times are snapped to whole frames of each clip's own
-  frame rate, read from the video (shown in the **Frame rate** column). Select a clip and pick a rate to override it,
-  or **Don't snap**. Audio-only clips use the default under More options (30). Subtitles in continuous speech always
-  touch, so they never blink.
-- **More options** - ignore `[bracketed notes]`, strip `Name:` speaker labels, keep or re-flow the writer's line
-  breaks, shortest/longest subtitle, hold subtitles through short pauses, include never-heard lines, the frame rate
-  for audio-only clips, and a Premiere fix (Premiere can drop a first cue that starts at exactly `00:00:00,000`, so
-  it starts at `00:00:00,067`).
+Pick a preset:
+
+| Preset | Max characters | Max words | On screen |
+|---|---|---|---|
+| **Short-form** (Reels, Shorts, TikTok) | 18 | 4 | 0.8–5 s |
+| **Standard** (default) | 40 | any | 0.8–5 s |
+| **Long-form** (interviews, YouTube) | 42 | any | 0.8–7 s |
+| **Custom** | your own | your own | your own |
+
+**Custom** shows every value, grouped as Listening, Subtitle shape and Output. Picking a preset again only changes
+Subtitle shape.
+
+- **Listening** - quality base / small (default) / medium / large-v3-turbo (use a bigger one for noisy audio), and
+  language: auto-detect, English, Tagalog/Filipino, Spanish.
+- **Frame rate** (per clip, in the clip panel) - subtitle times are snapped to whole frames of each clip's own
+  frame rate, read from the video. Pick a rate to override it, or **Don't snap**. Audio-only clips use the default
+  under More options (30). Subtitles in continuous speech always touch, so they never blink.
+- **More options…** (a separate window) - ignore `[bracketed notes]`, strip `Name:` speaker labels, keep or re-flow
+  the writer's line breaks, name hints for the listener, a Premiere fix (Premiere can drop a first cue that starts
+  at exactly `00:00:00,000`, so it starts at `00:00:00,067`), include never-heard lines, word timings, transcript
+  re-use, the speech model folder, and Troubleshooting.
 
 Styling (font, size, position, colours) is done in your editor; the SRT carries text and timing only.
 
@@ -235,6 +244,20 @@ is about 30 ms. See [`CLAUDE.md`](CLAUDE.md) for contributor and AI-agent rules.
 
 All changes go through pull requests, and **every PR is reviewed and merged by the repository owner by hand**.
 Please don't expect (or script) automated merging.
+
+Every pull request is checked automatically (**Actions > CI**): the unit tests, the timing-accuracy and cut-quality
+checks on Windows, macOS and Linux with Python 3.9 and 3.12, a Python 3.9 compatibility check, and a GUI smoke test.
+
+### Releases (maintainer)
+
+Releases are **manual**, so one version can bundle any number of merged fixes and features:
+
+1. Bump `APP_VERSION` in `scriptsync_core.py` in a pull request, and merge it.
+2. **Actions > Release > Run workflow**, enter the same version (e.g. `0.2.0`).
+3. It checks the version, runs the tests again, and creates a **draft** release `v0.2.0` with a ready-to-download
+   `ScryptSink-0.2.0.zip` and notes listing every pull request merged since the last release, grouped by label
+   (`enhancement` = New features, `bug` = Fixes, `documentation`).
+4. Read the draft on the Releases page, edit the notes if you like, and press **Publish**.
 
 ## License
 

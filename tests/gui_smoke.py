@@ -19,7 +19,16 @@ for _ in range(20): app.update(); time.sleep(0.02)
 first = next(iter(app.entries))
 app.tree.selection_set(first); app.update()
 for _ in range(10): app.update(); time.sleep(0.02)
-print("rows:", [app.tree.item(i, "values") for i in app.tree.get_children()])
-print("cues shown:", len(app.ctree.get_children()), "|", app.summary.cget("text"))
-os.system(f"import -window root {shot}")
+rows = [app.tree.item(i, "values") for i in app.tree.get_children()]
+print("rows:", rows)
+n_cues = len(app.ctree.get_children())
+print("cues shown:", n_cues, "|", app.summary.cget("text"))
+import shutil
+if shutil.which("import"):                     # ImageMagick, for a screenshot to look at
+    os.system(f"import -window root {shot}")
 app.destroy()
+# fail loudly (CI): the clip with a script synced and shows subtitles; the one without was not run
+assert any("Done" in " ".join(r) for r in rows), f"the clip with a script didn't finish: {rows}"
+assert any("Needs a script" in " ".join(r) for r in rows), f"the clip without a script should wait: {rows}"
+assert n_cues > 0, "no subtitles shown in the Review list"
+print("GUI smoke test OK")
