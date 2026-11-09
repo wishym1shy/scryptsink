@@ -1,6 +1,7 @@
 import os, sys, re, json, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scriptsync_core import *
+from scriptsync_core import _forget_setup
 
 def speak(segments, wps=2.8, pause=0.5, t=0.4):
     """segments: list of strings -> AsrWord list with plausible timing + ground truth (start,end) per segment"""
@@ -444,6 +445,25 @@ def test_decode_audio_without_pyav():
         decode_audio(os.path.join(d, "missing.mp4")); assert False
     except SyncError as e:
         assert "Couldn't read the audio" in str(e), e
+
+
+def test_missing_package_resets_launcher_setup():
+    """#12: if a package is missing, the launcher's setup marker goes so the next launch repairs it."""
+    import tempfile
+    d = tempfile.mkdtemp()
+    mark = os.path.join(d, SETUP_MARKER)
+    open(mark, "w").close()
+    old = sys.prefix, sys.base_prefix
+    try:
+        sys.prefix, sys.base_prefix = d, d          # not in a venv: leave everything alone
+        _forget_setup()
+        assert os.path.exists(mark)
+        sys.base_prefix = old[1]                    # in the launcher's venv: marker removed
+        _forget_setup()
+        assert not os.path.exists(mark)
+        _forget_setup()                             # already gone: no error
+    finally:
+        sys.prefix, sys.base_prefix = old
 
 
 if __name__ == "__main__":

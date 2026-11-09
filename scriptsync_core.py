@@ -1122,6 +1122,21 @@ def check_model_dir(path: str) -> str:
 _model_cache: dict = {}
 
 
+SETUP_MARKER = "setup-complete.txt"   # written by run_windows.bat / run_mac.command when setup worked
+
+
+def _forget_setup():
+    """A required package is missing even though setup said it finished: remove the launcher's marker
+    so the next launch repairs the install instead of opening a broken app again (#12)."""
+    if sys.prefix == getattr(sys, "base_prefix", sys.prefix):
+        return                                    # not running from the launcher's .venv
+    try:
+        os.remove(os.path.join(sys.prefix, SETUP_MARKER))
+        log.warning("setup: a package is missing; launcher will redo setup next time")
+    except OSError:
+        pass
+
+
 def _load_whisper(model: str, device: str, progress, model_dir: str = ""):
     key = (model, device, model_dir)
     if key in _model_cache:
@@ -1129,6 +1144,7 @@ def _load_whisper(model: str, device: str, progress, model_dir: str = ""):
     try:
         from faster_whisper import WhisperModel
     except ImportError:
+        _forget_setup()
         raise SyncError("The speech engine (faster-whisper) isn't installed. "
                         "Run the launcher again or: pip install faster-whisper")
     where = model_dir or default_model_dir()
@@ -1159,6 +1175,7 @@ def decode_audio(path: str):
     try:
         import numpy as np
     except ImportError:
+        _forget_setup()
         raise SyncError("numpy isn't installed. Re-run the launcher to finish setup.")
     kw = {"creationflags": 0x08000000} if os.name == "nt" else {}   # no console flash on Windows
     p = subprocess.run([ff, "-v", "error", "-nostdin", "-i", path, "-vn", "-ac", "1", "-ar", "16000",
