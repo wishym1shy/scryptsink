@@ -1,6 +1,6 @@
 # scryptsync
 
-**ScryptSync** (formerly ScryptSync, and before that Script Sync): give it a clip and the writer's script, get back a timed subtitle file (`.srt`) whose text is
+**ScryptSync** (formerly ScryptSink): give it a clip and the writer's script, get back a timed subtitle file (`.srt`) whose text is
 **the script exactly as written** and whose timing comes from the **actual audio**.
 
 No copy-pasting a transcript line by line. No auto-transcript to patch up. No dependence on any one editor:
