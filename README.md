@@ -67,7 +67,7 @@ You should end up with a folder like this (the launchers must stay beside the `.
 `run_windows.bat` out on its own):
 
 ```
-ScryptSink-0.1.0/
+ScryptSink-0.1.1/
   run_windows.bat
   run_mac.command
   scriptsync_core.py
