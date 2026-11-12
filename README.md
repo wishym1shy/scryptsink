@@ -6,6 +6,9 @@
 No copy-pasting a transcript line by line. No auto-transcript to patch up. No dependence on any one editor:
 the output is a plain SRT that Premiere Pro, DaVinci Resolve, Final Cut, CapCut and others can import.
 
+**[Download the latest release](https://github.com/wishym1shy/scryptsink/releases/latest)** (Windows and macOS), then see
+[Install and run](#install-and-run).
+
 > Status: early. The matching engine is tested against simulated speech-recognition mistakes; the real
 > speech-model path (`faster-whisper`) has had little testing on real footage so far. Please open an issue with anything odd.
 
@@ -51,30 +54,36 @@ finish. The big download button on python.org may offer a newer one; scroll down
 release?** and choose the newest 3.14. Already have a newer Python? Keep it and install 3.14 next to it; the
 launcher picks the one that works.
 
-### 2. Download the whole project
+### 2. Download ScryptSink
 
-The launcher needs the other files in this repo next to it (`scriptsync_core.py`, `scriptsync_gui.py`
-and `requirements.txt`), so don't download `run_windows.bat` on its own.
-
-1. On the repo page click the green **Code** button, then **Download ZIP**.
+1. Go to the **[latest release](https://github.com/wishym1shy/scryptsink/releases/latest)** and, under
+   **Assets**, download **`ScryptSink-<version>.zip`** (not "Source code").
 2. Extract the ZIP. On Windows: right-click it, **Extract All**. Don't run the launcher from inside the
    zip preview, it won't work.
-3. Move the extracted folder somewhere permanent (for example `Documents\scryptsink`). The first launch
+3. Move the extracted folder somewhere permanent (for example `Documents\ScryptSink`). The first launch
    creates a `.venv` folder inside it, so don't put it somewhere temporary or read-only.
 
-Or, if you use git: `git clone https://github.com/wishym1shy/scryptsink`
-
-You should end up with a folder like this (the launchers must stay beside the `.py` files):
+You should end up with a folder like this (the launchers must stay beside the `.py` files, so don't move
+`run_windows.bat` out on its own):
 
 ```
-scryptsink/
+ScryptSink-0.1.0/
   run_windows.bat
   run_mac.command
   scriptsync_core.py
   scriptsync_gui.py
   requirements.txt
-  ...
+  README.md
+  LICENSE
 ```
+
+**Updating to a new version:** download the new release's ZIP and extract it as a new folder. Its first
+launch runs setup again (a few minutes). Your settings, transcript cache and downloaded speech models are
+kept outside the folder, so nothing is lost; once the new version works, delete the old folder.
+
+Want the latest unreleased changes instead? Use the green **Code** button > **Download ZIP**, or
+`git clone https://github.com/wishym1shy/scryptsink`. These may include work that hasn't been tested as
+much as a release.
 
 ### 3. Start it
 
