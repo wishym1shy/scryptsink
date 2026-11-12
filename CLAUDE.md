@@ -52,7 +52,9 @@ exactly as written, with timing taken from the audio. Desktop GUI (tkinter) plus
    Numbers are spoken out ("$25,000" -> twenty five thousand dollars) on both sides before matching.
 3. Each script word inherits the time of the spoken word it matched. Unheard words are interpolated and flagged.
 4. The script's own line breaks become cues; long lines are cut where a speaker would breathe (sentence end,
-   clause punctuation, audio pause, never between words that belong together). `tests/cuts.py` measures this.
+   clause punctuation, audio pause, never between words that belong together, never a word alone on its line
+   unless it is a whole sentence). The weights are the `COST_*` constants; `tests/cuts.py` measures the result for the
+   Short-form shape (18 characters, 4 words) and at 32/40 characters, and CI holds it to its `LIMITS`.
    Users can also supply their own line breaks (by hand or from an outside AI tool); they're checked word-for-word
    against the script. The app never calls an AI service or stores an API key.
 5. Confidence per cue -> OK / CHECK / BAD, written to a review file.

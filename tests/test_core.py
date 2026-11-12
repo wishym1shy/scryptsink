@@ -508,6 +508,25 @@ def test_launchers_accept_the_supported_pythons():
     assert "\r\n" in open(os.path.join(root, "run_windows.bat"), "rb").read().decode(), "bat must stay CRLF"
 
 
+def test_no_word_alone_on_its_line():
+    """'This is our best | effort.' reads worse than 'This is our | best effort.' (Short-form: 18 chars, 4 words).
+    A one-word sentence ('Yes.') may still stand alone."""
+    from types import SimpleNamespace
+    from scriptsync_core import _split_words
+
+    def cut(text):
+        t, ws = 0.0, []
+        for w in text.split():
+            d = 0.12 + 0.05 * len(w)
+            ws.append(SimpleNamespace(text=w, start=t, end=t + d))
+            t += d + 0.06
+        return [" ".join(w.text for w in chunk) for chunk in _split_words(ws, Settings(max_chars=18, max_words=4))]
+
+    assert cut("This is our best effort.") == ["This is our", "best effort."], cut("This is our best effort.")
+    got = cut("Yes. This is our best effort.")
+    assert got[0] == "Yes." and all(len(c.split()) > 1 for c in got[1:]), got
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

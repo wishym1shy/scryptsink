@@ -721,6 +721,12 @@ is are was were be been being am has have had will would can could should shall 
 not very more most much many few such
 i we they he she i'm we're you're they're it's there's that's let's
 """.split())
+# Glue words that a line can still end on without reading badly (prepositions, conjunctions).
+_SOFT_GLUE = set("""
+of to in on at for with from by into onto over under about after before between through during
+without within across against along around behind beyond near toward towards upon via per like
+and but or nor so yet because if than as that which who whom whose where when while although though unless
+""".split())
 # Good words to start a new cue with (break *before* conjunctions and prepositions).
 _BREAK_BEFORE = set("""
 and but or so because which who where when while although though unless until
@@ -733,6 +739,13 @@ _CORE = re.compile(r"^\W+|\W+$")
 
 def _bare(text: str) -> str:
     return _CORE.sub("", text).lower().replace("’", "'")
+
+
+# Weights of the line cutter (lower total = better). Tuned with tests/cuts.py; see that file before changing.
+COST_NEW_CUE = 100.0      # every extra subtitle line
+COST_GLUE_END = 110.0     # ending a line on a word that can't stand without the next one ("the | car", "will | be")
+COST_SOFT_GLUE_END = 95.0  # ... on a preposition or conjunction, which reads less badly ("walk you through | it")
+COST_LONE_WORD = 90.0     # a word alone on its line ("Yes." as a whole sentence is fine)
 
 
 def _break_cost(ws: list, j: int, n: int) -> float:
@@ -748,7 +761,7 @@ def _break_cost(ws: list, j: int, n: int) -> float:
     else:
         b = _bare(prev.text)
         if b in _GLUE_FWD:
-            c += 80                                # "the | car", "will | be", "and | then"
+            c += COST_SOFT_GLUE_END if b in _SOFT_GLUE else COST_GLUE_END   # "the | car", "will | be", "and | then"
         if re.search(r"\d$", prev.text) and re.match(r"[^\W\d_]", nxt.text):
             c += 70                                # "25 | percent", "three | thousand" stays as written
         if prev.text[:1].isupper() and nxt.text[:1].isupper() and len(_bare(prev.text)) > 1:
@@ -807,10 +820,10 @@ def _split_words(ws: list, s: Settings) -> list:
                 continue
             if best[i] == INF:
                 continue
-            c = 100.0 + 0.06 * (chars(i, j) - target) ** 2 + cut[j]
+            c = COST_NEW_CUE + 0.06 * (chars(i, j) - target) ** 2 + cut[j]
             c += 400 * joins                        # two sentences in one cue
-            if j - i == 1 and n > 1 and not (sent_end[i] or _CLAUSE_END.search(ws[i].text)):
-                c += 90                             # lonely one-word cue
+            if j - i == 1 and n > 1 and not (sent_end[i] and (i == 0 or sent_end[i - 1])):
+                c += COST_LONE_WORD                 # a word alone on its line ("Yes." as a whole sentence is fine)
             if best[i] + c < best[j]:
                 best[j] = best[i] + c
                 back[j] = i

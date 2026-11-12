@@ -1,5 +1,8 @@
 """Cut-quality check: how often cues join two sentences, end on a word that belongs with the next one
-("the | car", "will | be"), or are a lone word. Lower is better. Run before/after changing the cue splitter:
+("the | car", "will | be"), leave a word alone on its line, or split a sentence into very uneven lines
+("This is our best | effort." rather than "This is our | best effort."). Lower is better.
+Measured for the Short-form shape (18 characters, 4 words) and at 32 and 40 characters.
+Run before/after changing the cue splitter (e.g. the COST_* weights in scriptsync_core.py):
 
     python tests/cuts.py          # summary
     python tests/cuts.py -v       # also list every flagged cue
@@ -19,6 +22,7 @@ SAMPLES = [
  "Welcome back to the channel. In today's video I am going to show you three simple ways to keep your plants alive through the winter months.",
  "She said the house on the corner of Maple Street was built in 1924 by a local carpenter. Nobody has lived there for almost twenty years.",
  "Book your appointment online in less than two minutes. We are open seven days a week, and walk-ins are always welcome at both of our locations.",
+ "This is our best effort. We stand behind every single thing we make, and we hope you can taste it.",
 ]
 
 
@@ -28,39 +32,56 @@ than my your his her its our their this that these those is are was were be been
 could should must do does did not""".split())
 
 
-def score(max_chars):
-    joins = glue = orphans = cues = 0
-    bad = []
+SENT_END = re.compile(r"[.!?][\"')]*$")
+SHAPES = [("Short-form", 18, 4), ("32 characters", 32, 0), ("40 characters", 40, 0)]
+MEASURES = ["two sentences in one cue", "ends on a glue word", "lone words", "uneven lines"]
+
+
+def score(max_chars, max_words=0):
+    """-> (cues, {measure: count}, [flagged cue descriptions])"""
+    n = dict.fromkeys(MEASURES, 0)
+    cues, bad = 0, []
     for sc in SAMPLES:
         asr, _, end = speak([sc])
-        s = core.Settings(max_chars=max_chars)
+        s = core.Settings(max_chars=max_chars, max_words=max_words)
         res = core.sync_words(core.parse_script(sc, s), asr, end, s)
-        for k, c in enumerate(res.cues):
+        texts = [c.text for c in res.cues]
+        for k, t in enumerate(texts):
             cues += 1
-            ws = c.text.split()
-            if any(re.search(r"[.!?][\"')]*$", w) for w in ws[:-1]):
-                joins += 1; bad.append("two sentences   " + c.text)
-            if k + 1 < len(res.cues) and re.sub(r"\W+$", "", ws[-1]).lower() in GLUE and not re.search(r"\W$", ws[-1]):
-                glue += 1; bad.append("ends on glue    " + c.text)
-            if len(ws) == 1 and not re.search(r"[.!?,;:]$", ws[0]):
-                orphans += 1; bad.append("lone word       " + c.text)
-    return cues, joins, glue, orphans, bad
+            ws = t.split()
+            if any(SENT_END.search(w) for w in ws[:-1]):
+                n["two sentences in one cue"] += 1; bad.append("two sentences   " + t)
+            if k + 1 < len(texts) and re.sub(r"\W+$", "", ws[-1]).lower() in GLUE and not re.search(r"\W$", ws[-1]):
+                n["ends on a glue word"] += 1; bad.append("ends on glue    " + t)
+            starts_sentence = k == 0 or SENT_END.search(texts[k - 1])
+            if len(ws) == 1 and not (starts_sentence and SENT_END.search(ws[0])):    # "Yes." alone is fine
+                n["lone words"] += 1; bad.append("lone word       " + t)
+            if k + 1 < len(texts) and not SENT_END.search(t):                   # the sentence goes on
+                a, b = len(t), len(texts[k + 1])
+                if min(a, b) / max(a, b) < 0.4:
+                    n["uneven lines"] += 1; bad.append(f"uneven lines    {t} | {texts[k + 1]}")
+    return cues, n, bad
 
 
-# --check (used by CI): today's splitter scores 0 / 0 / 0 at both widths; allow a little slack
-LIMITS = {"two sentences in one cue": 0, "ends on a glue word": 1, "lone words": 1}
+# --check (used by CI): today's values. Lower a limit when the splitter gets better; never raise one
+# without saying why in the PR.
+LIMITS = {
+    "Short-form":    {"two sentences in one cue": 0, "ends on a glue word": 6, "lone words": 0, "uneven lines": 3},
+    "32 characters": {"two sentences in one cue": 0, "ends on a glue word": 0, "lone words": 0, "uneven lines": 1},
+    "40 characters": {"two sentences in one cue": 0, "ends on a glue word": 0, "lone words": 0, "uneven lines": 0},
+}
 
 if __name__ == "__main__":
     failed = False
-    for mc in (32, 40):
-        cues, j, g, o, bad = score(mc)
-        print(f"max_chars={mc}: {cues} cues | two sentences in one cue: {j} | ends on a glue word: {g} | lone words: {o}")
+    for name, mc, mw in SHAPES:
+        cues, n, bad = score(mc, mw)
+        print(f"{name}: {cues} cues | " + " | ".join(f"{k}: {v}" for k, v in n.items()))
         if "-v" in sys.argv:
             for b in bad:
                 print("   " + b)
-        for (name, limit), value in zip(LIMITS.items(), (j, g, o)):
-            if value > limit:
-                print(f"FAIL at max_chars={mc}: {name} = {value} (limit {limit})")
+        for k, v in n.items():
+            if v > LIMITS[name][k]:
+                print(f"FAIL at {name}: {k} = {v} (limit {LIMITS[name][k]})")
                 failed = True
     if "--check" in sys.argv:
         print("FAIL" if failed else "OK: within limits")

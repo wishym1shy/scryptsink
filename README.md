@@ -247,7 +247,8 @@ On the command line, add `-v` to also print the log to the terminal.
 ```
 python tests/test_core.py     # unit tests; no model or audio needed
 python tests/stress.py        # simulated speech-model errors vs ground-truth timing
-python tests/cuts.py          # cue-cut quality on sample scripts (sentence joins, split phrases, lone words)
+python tests/cuts.py          # cue-cut quality on sample scripts, Short-form and wider (sentence joins, split
+                              # phrases, lone words, uneven lines)
 ```
 
 The engine (`scriptsync_core.py`) uses only the standard library for matching and cue building, so it can be
