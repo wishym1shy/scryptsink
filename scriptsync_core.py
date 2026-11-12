@@ -1,5 +1,5 @@
 """
-ScryptSink - core engine
+ScryptSync - core engine
 =========================
 By wishym1shy  (https://github.com/wishym1shy)
 
@@ -43,9 +43,9 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
 from typing import Callable, Optional
 
-APP_NAME = "ScryptSink"
+APP_NAME = "ScryptSync"
 APP_AUTHOR = "wishym1shy"
-APP_URL = "https://github.com/wishym1shy/scryptsink"
+APP_URL = "https://github.com/wishym1shy/scryptsync"
 APP_VERSION = "0.1.1"
 # Python versions the app can be installed on: the speech engine's dependencies have ready-made
 # packages for these. Python 3.15 is left out until onnxruntime ships for it (CI's "installable"
@@ -65,21 +65,27 @@ _private: dict = {}
 _private_lock = threading.Lock()
 LOG_MAX_BYTES = 1_000_000
 LOG_BACKUPS = 4
+LOG_NAME = "scryptsync.log"
 
 
-OLD_DATA_FOLDER = "ScriptSync"        # the app's name before it became ScryptSink
-DATA_FOLDER = "ScryptSink"
+DATA_FOLDER = "ScryptSync"
+OLD_DATA_FOLDERS = ("ScryptSink", "ScriptSync")   # the app's earlier names, newest first
 
 
 def data_folder(base: str) -> str:
-    """<base>/ScryptSink, moving <base>/ScriptSync (the old name) there the first time, so settings,
-    saved transcripts and logs survive the rename."""
-    new, old = os.path.join(base, DATA_FOLDER), os.path.join(base, OLD_DATA_FOLDER)
-    if not os.path.exists(new) and os.path.isdir(old):
-        try:
-            os.rename(old, new)
-        except OSError:
-            return old                      # couldn't move it (in use?): keep using the old one
+    """<base>/ScryptSync, moving the folder of an earlier name (ScryptSink, or ScriptSync before that)
+    there the first time, so settings, saved transcripts and logs survive the renames."""
+    new = os.path.join(base, DATA_FOLDER)
+    if os.path.exists(new):
+        return new
+    for name in OLD_DATA_FOLDERS:
+        old = os.path.join(base, name)
+        if os.path.isdir(old):
+            try:
+                os.rename(old, new)
+            except OSError:
+                return old                  # couldn't move it (in use?): keep using the old one
+            break
     return new
 
 
@@ -93,7 +99,7 @@ def log_dir() -> str:
 
 
 def log_path() -> str:
-    return os.path.join(log_dir(), "scryptsink.log")
+    return os.path.join(log_dir(), LOG_NAME)
 
 
 def register_private_path(path: Optional[str], label: str):
@@ -142,7 +148,7 @@ def setup_logging(directory: Optional[str] = None, console: bool = False) -> Opt
         ch.setLevel(logging.INFO)
         lg.addHandler(ch)
     d = directory or log_dir()
-    path = os.path.join(d, "scryptsink.log")
+    path = os.path.join(d, LOG_NAME)
     try:
         os.makedirs(d, exist_ok=True)
         fh = logging.handlers.RotatingFileHandler(path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS,
@@ -1516,7 +1522,7 @@ def write_result(res: SyncResult) -> SyncResult:
 # Output file names
 # --------------------------------------------------------------------------
 _NTSC = {24000 / 1001: "23.976", 30000 / 1001: "29.97", 60000 / 1001: "59.94"}
-# Everything ScryptSink writes: "<clip>_synced_..." plus the old "<clip>.synced.srt" style.
+# Everything ScryptSync writes: "<clip>_synced_..." plus the old "<clip>.synced.srt" style.
 OUTPUT_FILE = re.compile(r"(_synced_.*|\.synced)\.srt$|\.review\.txt$|\.words\.(srt|json)$", re.I)
 
 

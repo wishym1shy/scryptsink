@@ -1,12 +1,12 @@
-# scryptsink
+# scryptsync
 
-**ScryptSink** (formerly Script Sync): give it a clip and the writer's script, get back a timed subtitle file (`.srt`) whose text is
+**ScryptSync** (formerly ScryptSync, and before that Script Sync): give it a clip and the writer's script, get back a timed subtitle file (`.srt`) whose text is
 **the script exactly as written** and whose timing comes from the **actual audio**.
 
 No copy-pasting a transcript line by line. No auto-transcript to patch up. No dependence on any one editor:
 the output is a plain SRT that Premiere Pro, DaVinci Resolve, Final Cut, CapCut and others can import.
 
-**[Download the latest release](https://github.com/wishym1shy/scryptsink/releases/latest)** (Windows and macOS), then see
+**[Download the latest release](https://github.com/wishym1shy/scryptsync/releases/latest)** (Windows and macOS), then see
 [Install and run](#install-and-run).
 
 > Status: early. The matching engine is tested against simulated speech-recognition mistakes; the real
@@ -18,7 +18,7 @@ When a writer supplies the script and an editor receives pre-cut footage, subtit
 or by generating an auto-transcript and pasting the script into it. Both are slow, and the auto-transcript's
 spelling still has to be fixed.
 
-ScryptSink treats it as an alignment problem instead: the speech model only supplies *when* each word was said.
+ScryptSync treats it as an alignment problem instead: the speech model only supplies *when* each word was said.
 The *words* always come from the script.
 
 ## How it works
@@ -54,20 +54,20 @@ finish. The big download button on python.org may offer a newer one; scroll down
 release?** and choose the newest 3.14. Already have a newer Python? Keep it and install 3.14 next to it; the
 launcher picks the one that works.
 
-### 2. Download ScryptSink
+### 2. Download ScryptSync
 
-1. Go to the **[latest release](https://github.com/wishym1shy/scryptsink/releases/latest)** and, under
-   **Assets**, download **`ScryptSink-<version>.zip`** (not "Source code").
+1. Go to the **[latest release](https://github.com/wishym1shy/scryptsync/releases/latest)** and, under
+   **Assets**, download **`ScryptSync-<version>.zip`** (not "Source code").
 2. Extract the ZIP. On Windows: right-click it, **Extract All**. Don't run the launcher from inside the
    zip preview, it won't work.
-3. Move the extracted folder somewhere permanent (for example `Documents\ScryptSink`). The first launch
+3. Move the extracted folder somewhere permanent (for example `Documents\ScryptSync`). The first launch
    creates a `.venv` folder inside it, so don't put it somewhere temporary or read-only.
 
 You should end up with a folder like this (the launchers must stay beside the `.py` files, so don't move
 `run_windows.bat` out on its own):
 
 ```
-ScryptSink-0.1.1/
+ScryptSync-<version>/
   run_windows.bat
   run_mac.command
   scriptsync_core.py
@@ -80,9 +80,11 @@ ScryptSink-0.1.1/
 **Updating to a new version:** download the new release's ZIP and extract it as a new folder. Its first
 launch runs setup again (a few minutes). Your settings, transcript cache and downloaded speech models are
 kept outside the folder, so nothing is lost; once the new version works, delete the old folder.
+Coming from a version named ScryptSink? Its settings and saved transcripts move to the new `ScryptSync`
+data folder automatically the first time the new version starts.
 
 Want the latest unreleased changes instead? Use the green **Code** button > **Download ZIP**, or
-`git clone https://github.com/wishym1shy/scryptsink`. These may include work that hasn't been tested as
+`git clone https://github.com/wishym1shy/scryptsync`. These may include work that hasn't been tested as
 much as a release.
 
 ### 3. Start it
@@ -193,9 +195,9 @@ automatic cuts.
 To have an AI tool do it, choose **More > Copy AI prompt**, paste it into the AI tool you already use, copy its answer and
 paste that into **Apply my own line breaks…**.
 
-**ScryptSink never calls an AI service itself and has no place for an API key.** Everything it does runs on your
-machine; the AI step, if you want one, happens in your own tool, and ScryptSink only reads the text you paste back.
-AI tools sometimes "tidy up" wording, so ScryptSink checks that every word and punctuation mark is exactly as in
+**ScryptSync never calls an AI service itself and has no place for an API key.** Everything it does runs on your
+machine; the AI step, if you want one, happens in your own tool, and ScryptSync only reads the text you paste back.
+AI tools sometimes "tidy up" wording, so ScryptSync checks that every word and punctuation mark is exactly as in
 the script and refuses the line breaks otherwise, listing each word that was changed, added or dropped.
 
 ### Word timings for other tools
@@ -216,17 +218,17 @@ More options: `--fps 25` (frame rate to snap to; default `auto` = the clip's own
 prompt for this script and exit) and `--line-breaks recut.txt` (use your own line breaks; checked against the script).
 
 Everything runs locally; clips and scripts never leave your machine. Transcripts are cached in
-`%LOCALAPPDATA%\ScryptSink\cache` (Windows) or `~/.cache/ScryptSink/cache` so re-syncing an edited script is instant.
+`%LOCALAPPDATA%\ScryptSync\cache` (Windows) or `~/.cache/ScryptSync/cache` so re-syncing an edited script is instant.
 An NVIDIA GPU is used automatically when available, otherwise the CPU (a 60 s clip takes very roughly 15-40 s
 on the default model).
 
 ## Troubleshooting
 
-ScryptSink keeps a log of what it does (app version, settings used, how long each step took, which device the
+ScryptSync keeps a log of what it does (app version, settings used, how long each step took, which device the
 speech model ran on, and the full details of any error). It stays on your computer:
 
-- Windows: `%LOCALAPPDATA%\ScryptSink\logs\scryptsink.log`
-- macOS / Linux: `~/.cache/ScryptSink/logs/scryptsink.log`
+- Windows: `%LOCALAPPDATA%\ScryptSync\logs\scryptsync.log`
+- macOS / Linux: `~/.cache/ScryptSync/logs/scryptsync.log`
 
 It is capped at about 5 MB (older entries are dropped). In the app: **More options > Troubleshooting**:
 **Open log folder**, or **Copy diagnostic info** to put the version, system details and the end of the log on the
@@ -270,7 +272,7 @@ Releases are **manual**, so one version can bundle any number of merged fixes an
 1. Bump `APP_VERSION` in `scriptsync_core.py` in a pull request, and merge it.
 2. **Actions > Release > Run workflow**, enter the same version (e.g. `0.2.0`).
 3. It checks the version, runs the tests again, and creates a **draft** release `v0.2.0` with a ready-to-download
-   `ScryptSink-0.2.0.zip` and notes listing every pull request merged since the last release, grouped by label
+   `ScryptSync-0.2.0.zip` and notes listing every pull request merged since the last release, grouped by label
    (`enhancement` = New features, `bug` = Fixes, `documentation`).
 4. Read the draft on the Releases page, edit the notes if you like, and press **Publish**.
 

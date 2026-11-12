@@ -7,7 +7,7 @@ MARK=.venv/setup-complete.txt
 fail() { echo; echo "Setup did not finish. Check the internet connection and open this file again;"
          echo "it picks up where it stopped."; read -p "Press Enter"; exit 1; }
 
-# Python versions ScryptSink can install on. Keep in step with PYTHON_MIN/PYTHON_MAX in scriptsync_core.py.
+# Python versions ScryptSync can install on. Keep in step with PYTHON_MIN/PYTHON_MAX in scriptsync_core.py.
 PYOK='import sys; sys.exit(not (3,9) <= sys.version_info[:2] <= (3,14))'
 # The window needs Tk 8.6 or newer. Apple's own python3 (from the Xcode command line tools) only has the old,
 # deprecated Tk 8.5 and the app can't start with it, so it is skipped; python.org's installer brings its own Tk.
@@ -22,13 +22,13 @@ done
 no_python() {
   echo
   if command -v python3 >/dev/null 2>&1 && python3 -c "$PYOK" 2>/dev/null; then
-    echo "The Python on this Mac ($(python3 -c 'import platform; print(platform.python_version())' 2>/dev/null)) can't show ScryptSink's window:"
+    echo "The Python on this Mac ($(python3 -c 'import platform; print(platform.python_version())' 2>/dev/null)) can't show ScryptSync's window:"
     echo "its window toolkit (Tk) is missing or too old. Apple's built-in Python has this problem."
     echo "Install Python 3.14 from https://www.python.org/downloads/ (you can keep the other version),"
     echo "then open this file again."
   elif command -v python3 >/dev/null 2>&1; then
-    echo "ScryptSink can't use the Python on this Mac ($(python3 -c 'import platform; print(platform.python_version())' 2>/dev/null)):"
-    echo "part of the speech engine isn't available for that version yet. ScryptSink works with Python 3.9 to 3.14."
+    echo "ScryptSync can't use the Python on this Mac ($(python3 -c 'import platform; print(platform.python_version())' 2>/dev/null)):"
+    echo "part of the speech engine isn't available for that version yet. ScryptSync works with Python 3.9 to 3.14."
     echo "Install Python 3.14 from https://www.python.org/downloads/ (under \"Looking for a specific release?\";"
     echo "you can keep the other version), then open this file again."
   else
@@ -58,11 +58,11 @@ install() {
 # Also redo setup if the .venv was built on a Python that can't run the app (e.g. Apple's built-in one).
 if [ ! -x .venv/bin/python ] || ! cmp -s "$MARK" requirements.txt || ! usable .venv/bin/python; then
   if [ -d .venv ]; then
-    echo "Setup didn't finish last time, or ScryptSink was updated. Finishing it now..."
+    echo "Setup didn't finish last time, or ScryptSync was updated. Finishing it now..."
   else
     echo "First-time setup (a few minutes, needs internet)..."
   fi
-  echo "Please keep this window open until ScryptSink opens."
+  echo "Please keep this window open until ScryptSync opens."
   rm -f "$MARK"
   # Reuse a .venv whose Python works and can run the app (saves re-downloading); otherwise start again.
   usable .venv/bin/python || fresh_venv
@@ -76,7 +76,7 @@ if [ ! -x .venv/bin/python ] || ! cmp -s "$MARK" requirements.txt || ! usable .v
 fi
 .venv/bin/python scriptsync_gui.py || {
   echo
-  echo "ScryptSink closed because of an error (details above, and in the log:"
-  echo "~/.cache/ScryptSink/logs/scryptsink.log). Please report it with that log."
+  echo "ScryptSync closed because of an error (details above, and in the log:"
+  echo "~/.cache/ScryptSync/logs/scryptsync.log). Please report it with that log."
   read -p "Press Enter"; exit 1
 }
