@@ -1,5 +1,5 @@
 """
-ScryptSink - desktop app (no command line needed)
+ScryptSync - desktop app (no command line needed)
 By wishym1shy  (https://github.com/wishym1shy)
 
 Add clips (and their scripts), press Sync, get a timed .srt next to each clip
@@ -1702,7 +1702,7 @@ def _install_crash_logging():
         if sys.stderr:                          # a console is open (macOS Terminal, command line): say so there too
             import traceback
             traceback.print_exception(exc, val, tb)
-            print(f"\nScryptSink stopped because of an error. Log: {core.log_path()}",
+            print(f"\nScryptSync stopped because of an error. Log: {core.log_path()}",
                   file=sys.stderr)
     sys.excepthook = hook
 

@@ -402,7 +402,7 @@ def test_log_rotates():
         lg.info("filler line %d %s", i, "x" * 40)
     for h in lg.handlers: h.flush()
     files = sorted(os.listdir(d))
-    assert files[:2] == ["scryptsink.log", "scryptsink.log.1"] and len(files) <= 1 + LOG_BACKUPS, files
+    assert files[:2] == ["scryptsync.log", "scryptsync.log.1"] and len(files) <= 1 + LOG_BACKUPS, files
     assert all(os.path.getsize(os.path.join(d, f)) <= LOG_MAX_BYTES + 200 for f in files)
     setup_logging(directory=tempfile.mkdtemp())
 
@@ -414,13 +414,27 @@ def test_data_folder_moves_to_new_name():
     old = os.path.join(base, "ScriptSync"); os.makedirs(os.path.join(old, "cache"))
     open(os.path.join(old, "settings.json"), "w").write("{}")
     new = data_folder(base)
-    assert new == os.path.join(base, "ScryptSink")
+    assert new == os.path.join(base, "ScryptSync")
     assert os.path.exists(os.path.join(new, "settings.json")) and os.path.isdir(os.path.join(new, "cache"))
     assert not os.path.exists(old)
     os.makedirs(old)                                   # an old folder appearing later is left alone
     assert data_folder(base) == new and os.path.isdir(old)
     fresh = tempfile.mkdtemp()                          # nothing old: just the new name
-    assert data_folder(fresh) == os.path.join(fresh, "ScryptSink")
+    assert data_folder(fresh) == os.path.join(fresh, "ScryptSync")
+
+
+def test_data_folder_moves_from_every_earlier_name():
+    """ScryptSink -> ScryptSync, and the even older ScriptSync -> ScryptSync; the newest earlier name wins."""
+    import tempfile
+    for olds in (["ScryptSink"], ["ScriptSync"], ["ScriptSync", "ScryptSink"]):
+        base = tempfile.mkdtemp()
+        for name in olds:
+            os.makedirs(os.path.join(base, name))
+            open(os.path.join(base, name, "settings.json"), "w").write(name)
+        new = data_folder(base)
+        assert new == os.path.join(base, "ScryptSync"), (olds, new)
+        assert open(os.path.join(new, "settings.json")).read() == olds[-1], olds    # the newest one moved
+        assert not os.path.exists(os.path.join(base, olds[-1]))
 
 
 def test_recut_from_saved_word_timings():

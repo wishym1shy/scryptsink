@@ -66,9 +66,9 @@ jobs:
         run: |
           V="${VERSION#v}"
           mkdir -p dist
-          git archive --format=zip --prefix="ScryptSink-$V/" -o "dist/ScryptSink-$V.zip" HEAD -- \
+          git archive --format=zip --prefix="ScryptSync-$V/" -o "dist/ScryptSync-$V.zip" HEAD -- \
             scriptsync_core.py scriptsync_gui.py requirements.txt run_windows.bat run_mac.command README.md LICENSE
-          unzip -l "dist/ScryptSink-$V.zip"
+          unzip -l "dist/ScryptSync-$V.zip"
 
       - name: Create the release (notes list every pull request merged since the last one)
         env:
@@ -77,5 +77,5 @@ jobs:
           V="${VERSION#v}"
           FLAGS=""
           if [ "$DRAFT" = "true" ]; then FLAGS="--draft"; fi
-          gh release create "v$V" "dist/ScryptSink-$V.zip" --target "$(git rev-parse HEAD)" \
-            --title "ScryptSink $V" --generate-notes $FLAGS
+          gh release create "v$V" "dist/ScryptSync-$V.zip" --target "$(git rev-parse HEAD)" \
+            --title "ScryptSync $V" --generate-notes $FLAGS

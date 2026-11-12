@@ -6,7 +6,7 @@ rem Setup counts as finished only when this marker exists. It is written last, a
 rem worked, and holds a copy of requirements.txt, so an updated app re-runs the install too (#12).
 set "MARK=.venv\setup-complete.txt"
 set "RETRIED="
-rem Python versions ScryptSink can install on. Keep in step with PYTHON_MIN/PYTHON_MAX in scriptsync_core.py.
+rem Python versions ScryptSync can install on. Keep in step with PYTHON_MIN/PYTHON_MAX in scriptsync_core.py.
 set "PYOK=import sys; sys.exit(not (3,9) <= sys.version_info[:2] <= (3,14))"
 if not exist ".venv\Scripts\pythonw.exe" goto setup
 if not exist "%MARK%" goto setup
@@ -17,13 +17,13 @@ goto launch
 :setup
 echo.
 if exist ".venv" goto resume
-echo  First-time setup for ScryptSink. This takes a few minutes and needs internet.
+echo  First-time setup for ScryptSync. This takes a few minutes and needs internet.
 echo  (It only happens once.)
 goto setup_go
 :resume
-echo  Setup didn't finish last time, or ScryptSink was updated. Finishing it now.
+echo  Setup didn't finish last time, or ScryptSync was updated. Finishing it now.
 :setup_go
-echo  Please keep this window open until ScryptSink opens.
+echo  Please keep this window open until ScryptSync opens.
 echo.
 if exist "%MARK%" del /q "%MARK%"
 rem Reuse a .venv whose Python works and is a supported version (saves re-downloading);
@@ -86,8 +86,8 @@ exit /b 1
 :wrongpython
 set "FOUNDV="
 for /f "delims=" %%v in ('%ANYPY% -c "import platform; print(platform.python_version())" 2^>nul') do set "FOUNDV=%%v"
-echo  ScryptSink can't use the Python on this computer (%FOUNDV%): part of the speech engine
-echo  isn't available for that version yet. ScryptSink works with Python 3.9 to 3.14.
+echo  ScryptSync can't use the Python on this computer (%FOUNDV%): part of the speech engine
+echo  isn't available for that version yet. ScryptSync works with Python 3.9 to 3.14.
 echo  1. Go to https://www.python.org/downloads/ and install Python 3.14
 echo     (under "Looking for a specific release?"). You can keep the other version.
 echo  2. On the first installer screen, tick "Add python.exe to PATH".
