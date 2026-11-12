@@ -1699,6 +1699,11 @@ def _install_crash_logging():
     """Uncaught errors anywhere end up in the log instead of a console nobody sees (pythonw)."""
     def hook(exc, val, tb):
         log.critical("uncaught error", exc_info=(exc, val, tb))
+        if sys.stderr:                          # a console is open (macOS Terminal, command line): say so there too
+            import traceback
+            traceback.print_exception(exc, val, tb)
+            print(f"\nScryptSink stopped because of an error. Log: {core.log_path()}",
+                  file=sys.stderr)
     sys.excepthook = hook
 
     def thread_hook(args):
