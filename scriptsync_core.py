@@ -1148,6 +1148,12 @@ def check_model_dir(path: str) -> str:
 _model_cache: dict = {}
 
 
+WINDOWS_BLOCKED = (
+    "Windows refused to load part of the speech engine. This is usually Windows 11's Smart App Control, "
+    "which blocks it because one of its files is not digitally signed. To use ScryptSync, turn it off: "
+    "Windows Security > App & browser control > Smart App Control settings > Off. Note that Windows can "
+    "only turn it back on by reinstalling Windows; Microsoft Defender keeps protecting the PC either way. "
+    "On a work computer, ask your IT team first.")
 SETUP_MARKER = "setup-complete.txt"   # written by run_windows.bat / run_mac.command when setup worked
 
 
@@ -1169,7 +1175,11 @@ def _load_whisper(model: str, device: str, progress, model_dir: str = ""):
         return _model_cache[key]
     try:
         from faster_whisper import WhisperModel
-    except ImportError:
+    except ImportError as e:
+        if "DLL load failed" in str(e):
+            # Installed, but Windows refused to load it (usually Smart App Control: ctranslate2.dll is
+            # not digitally signed). Reinstalling can't fix that, so keep the setup as it is.
+            raise SyncError(WINDOWS_BLOCKED + f"\n\nDetails: {e}") from e
         _forget_setup()
         raise SyncError("The speech engine (faster-whisper) isn't installed. "
                         "Run the launcher again or: pip install faster-whisper")

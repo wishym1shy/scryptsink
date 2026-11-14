@@ -541,6 +541,38 @@ def test_no_word_alone_on_its_line():
     assert got[0] == "Yes." and all(len(c.split()) > 1 for c in got[1:]), got
 
 
+def test_windows_blocked_speech_engine_is_explained_not_reinstalled():
+    """Smart App Control blocks ctranslate2.dll: say so, and keep the launcher's setup marker (a reinstall
+    can't help). A really missing package still resets the marker so the launcher repairs it."""
+    import builtins, tempfile
+    import scriptsync_core as core
+    real_import = builtins.__import__
+    d = tempfile.mkdtemp()
+    mark = os.path.join(d, core.SETUP_MARKER)
+    old = sys.prefix, sys.base_prefix
+    for err, keeps_marker, says in (
+            (ImportError("DLL load failed while importing _ext: An Application Control policy has blocked "
+                         "this file."), True, "Smart App Control"),
+            (ModuleNotFoundError("No module named 'faster_whisper'"), False, "isn't installed")):
+        open(mark, "w").close()
+
+        def fake_import(name, *a, **k):
+            if name == "faster_whisper":
+                raise err
+            return real_import(name, *a, **k)
+        builtins.__import__ = fake_import
+        sys.prefix, sys.base_prefix = d, d + "-base"          # as if running from the launcher's .venv
+        try:
+            core._load_whisper("tiny-test", "cpu", lambda *a: None)
+            raise AssertionError("expected a SyncError")
+        except core.SyncError as e:
+            assert says in str(e), str(e)
+        finally:
+            builtins.__import__ = real_import
+            sys.prefix, sys.base_prefix = old
+        assert os.path.exists(mark) == keeps_marker, (err, keeps_marker)
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):

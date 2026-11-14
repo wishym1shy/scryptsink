@@ -52,7 +52,8 @@ fresh_venv() {
 
 install() {
   .venv/bin/python -m pip install --upgrade pip && .venv/bin/python -m pip install -r requirements.txt || fail
-  .venv/bin/python -c "import faster_whisper, imageio_ffmpeg" 2>/dev/null
+  # Check the speech engine really loads; keep its error to show if it still doesn't after a rebuild.
+  .venv/bin/python -c "import faster_whisper, imageio_ffmpeg" > .venv/import-check.txt 2>&1
 }
 
 # Also redo setup if the .venv was built on a Python that can't run the app (e.g. Apple's built-in one).
@@ -70,7 +71,11 @@ if [ ! -x .venv/bin/python ] || ! cmp -s "$MARK" requirements.txt || ! usable .v
     # Installed but won't import (an earlier install was cut off half-way): rebuild once from scratch.
     echo "Some parts of the last setup were incomplete. Starting setup again from scratch..."
     fresh_venv
-    install || fail
+    if ! install; then
+      echo; echo "The speech engine was installed but doesn't load. The error was:"; echo
+      cat .venv/import-check.txt
+      fail
+    fi
   fi
   cp requirements.txt "$MARK" || fail
 fi
