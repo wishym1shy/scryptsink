@@ -185,6 +185,18 @@ Above the subtitle list, drag **Max characters** (or change **Max words**): the 
 word timings found during the sync, with no listening again. Changed subtitles are marked ✎. **Save as new .srt**
 writes it next to the earlier version (the name says the new limits); **Undo** goes back to the saved cut.
 
+### Subtitle changes on video cuts
+
+A subtitle that changes one or two frames before or after a cut looks like a glitch. ScryptSync finds the cuts
+in the clip (including jump cuts in a static talking-head shot, where only the speaker moves a little) and moves
+a subtitle change that is a few frames off a cut **exactly onto the cut**. It never adds a change because of a
+cut: a jump cut in the middle of a sentence (an "um" taken out) doesn't split the sentence.
+
+A change is left where it is if moving it would cut off speech: when someone is still talking across the cut, or
+the next line already started before it. The review sheet lists those under **Subtitle changes near a video
+cut**, so you know exactly where to look. Turn it off under **More options > Snap subtitle changes to video cuts**.
+Looking for cuts runs while the speech model listens, so it adds little or no time.
+
 ### Your own line breaks (by hand or with an AI tool)
 
 Prefer to decide the breaks yourself? After a sync, select the clip and choose **More > Apply my own line breaks…**. The window

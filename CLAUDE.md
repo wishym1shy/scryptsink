@@ -57,7 +57,10 @@ exactly as written, with timing taken from the audio. Desktop GUI (tkinter) plus
    Short-form shape (18 characters, 4 words) and at 32/40 characters, and CI holds it to its `LIMITS`.
    Users can also supply their own line breaks (by hand or from an outside AI tool); they're checked word-for-word
    against the script. The app never calls an AI service or stores an API key.
-5. Confidence per cue -> OK / CHECK / BAD, written to a review file.
+5. Subtitle changes a few frames off a video cut are moved onto it (`detect_cuts`: a frame that changes far more
+   than its neighbours, so jump cuts in static shots count; `_snap_to_cuts`). Cuts never add subtitle changes, and a
+   change is only moved if no speech is cut off; the ones left near a cut are listed in the review file.
+6. Confidence per cue -> OK / CHECK / BAD, written to a review file.
 
 Design rules that should not regress:
 

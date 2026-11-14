@@ -573,6 +573,116 @@ def test_windows_blocked_speech_engine_is_explained_not_reinstalled():
         assert os.path.exists(mark) == keeps_marker, (err, keeps_marker)
 
 
+def _make_cut_clip(folder):
+    """A synthetic 'precut' clip at 29.97 fps (made with ffmpeg; no real footage): a static talking-head
+    shot (still background, a head that sways, a mouth that moves) with two jump cuts where the head
+    only shifts a little, then a hard cut to a different shot. -> (path, true cut times)"""
+    import subprocess
+    ff = find_ffmpeg()
+    parts, truth, t = [], [], 0.0
+    shots = [(1.5, 520, 200, "smptehdbars"), (1.2, 548, 210, "smptehdbars"), (1.5, 510, 194, "smptehdbars"),
+             (1.2, 0, 0, "testsrc2")]
+    for k, (d, x, y, src) in enumerate(shots):
+        out = os.path.join(folder, f"shot{k}.mp4")
+        if src == "testsrc2":
+            fc = "[0]format=yuv420p"
+            inputs = ["-f", "lavfi", "-i", f"testsrc2=s=640x360:r=30000/1001:d={d}"]
+        else:
+            inputs = ["-f", "lavfi", "-i", f"{src}=s=640x360:r=30000/1001:d={d},boxblur=6",
+                      "-f", "lavfi", "-i", f"color=c=0xC89070:s=110x140:r=30000/1001:d={d}",
+                      "-f", "lavfi", "-i", f"color=c=0x602020:s=40x12:r=30000/1001:d={d}"]
+            x, y = x // 2, y // 2
+            fc = (f"[0][1]overlay=x='{x}+6*sin(t*1.3)':y='{y}+3*sin(t*0.9)'[a];"
+                  f"[a][2]overlay=x='{x}+35+6*sin(t*1.3)':y='{y}+95+4*sin(t*17)',noise=alls=6:allf=t,format=yuv420p")
+        subprocess.run([ff, "-v", "error", "-y", *inputs, "-filter_complex", fc, "-c:v", "libx264",
+                        "-preset", "ultrafast", "-crf", "20", out], check=True)
+        parts.append(out)
+        if k:
+            truth.append(t)
+        t += round(d * 30000 / 1001) * 1001 / 30000          # whole frames
+    lst = os.path.join(folder, "parts.txt")
+    open(lst, "w").write("".join(f"file '{p}'\n" for p in parts))
+    clip = os.path.join(folder, "cuts.mp4")
+    subprocess.run([ff, "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c:v", "libx264",
+                    "-preset", "ultrafast", "-crf", "20", clip], check=True)
+    return clip, truth
+
+
+def test_detect_cuts_finds_jump_cuts_in_a_static_shot():
+    """#30: jump cuts where only the speaker moves a little, and a hard cut, each on its exact frame."""
+    import tempfile
+    if not find_ffmpeg():
+        print("    (skipped: no ffmpeg)"); return
+    d = tempfile.mkdtemp()
+    clip, truth = _make_cut_clip(d)
+    found = detect_cuts(clip, use_cache=False)
+    frame = 1001 / 30000
+    assert len(found) == len(truth), (found, truth)
+    for f, t in zip(found, truth):
+        assert abs(f - t) < frame / 2, (found, truth)
+    scores = frame_change_scores(clip)
+    assert max(v for tt, v in scores if all(abs(tt - c) > 0.05 for c in truth)) < CUT_MIN_SCORE * CUT_SPIKE, \
+        "ordinary movement scores close to a cut: the test clip no longer tests the hard case"
+
+
+def _cue(start, end, text="x y z"):
+    return Cue(0, start, end, text, 1.0, "ok", [], 0, len(text.split()))
+
+
+def test_subtitle_changes_snap_onto_nearby_cuts():
+    """#30: a change 1-2 frames off a cut moves onto it, from either side; one whose speech runs across
+    the cut stays and gets a note; far-away cuts and cuts inside a subtitle change nothing."""
+    from scriptsync_core import _finalize_times, _NEAR_CUT
+    fps = 30000 / 1001
+    f = 1 / fps
+    s = Settings(fps=fps, premiere_zero_fix=False, tail_hold=0.0, bridge_gap=0.4, min_cue_seconds=0.5)
+    snap = lambda t: round(t * fps) / fps
+
+    def run(spans, cuts):
+        cues = [_cue(a, b) for a, b in spans]
+        stats = _finalize_times(cues, s, 30.0, cuts)
+        return cues, stats
+
+    # 1. change 2 frames AFTER a cut (subtitle lags): moves earlier onto it
+    cut = snap(3.0)
+    cues, st = run([(1.0, cut + 2 * f - 0.05), (cut + 2 * f, 5.0)], [cut])
+    assert abs(cues[1].start - cut) < 1e-6 and abs(cues[0].end - cut) < 1e-6 and st["snapped"] == 1, cues
+    # 2. change 2 frames BEFORE a cut (subtitle early): moves later onto it
+    cues, st = run([(1.0, cut - 2 * f - 0.05), (cut - 2 * f + 0.03, 5.0)], [cut])
+    assert abs(cues[1].start - cut) < 1e-6 and abs(cues[0].end - cut) < 1e-6, cues
+    # 3. the next line is already being said well before the cut: stays, with a note
+    cues, st = run([(1.0, cut - 8 * f - 0.05), (cut - 7 * f, 5.0)], [cut])
+    assert abs(cues[1].start - cut) > f and any(n.startswith(_NEAR_CUT) for n in cues[1].notes), cues
+    # 4. a cut far from any change (inside a subtitle: a jump cut mid-sentence) changes nothing
+    cues, st = run([(1.0, 2.5), (2.5, 5.0)], [snap(4.0)])
+    assert abs(cues[1].start - 2.5) < f and st["snapped"] == 0 and not cues[1].notes, cues
+    # 5. last frame on screen 3 frames after a cut, then a gap: ends on the cut
+    cues, st = run([(1.0, cut - 0.2), (cut + 1.5, 6.0)], [cut])
+    assert abs(cues[0].end - cut) < 1e-6, cues
+    # 6. a subtitle appearing 2 frames after a cut, after a gap: appears on the cut
+    cues, st = run([(1.0, cut - 1.0), (cut + 2 * f, 5.0)], [cut])
+    assert abs(cues[1].start - cut) < 1e-6, cues
+    # 7. off: nothing moves
+    cues = [_cue(1.0, cut + 2 * f - 0.05), _cue(cut + 2 * f, 5.0)]
+    _finalize_times(cues, Settings(fps=fps, premiere_zero_fix=False, snap_to_cuts=False), 30.0, [cut])
+    assert abs(cues[1].start - cut) > f / 2, cues
+
+
+def test_recut_keeps_snapping_to_cuts():
+    """The live re-cut in Review builds new subtitles from the saved word timings: they snap too."""
+    lines = ["Welcome back to the channel.", "Today we cook pasta together."]
+    asr, _, end = speak(lines, pause=0.6)
+    script = "\n".join(lines)
+    s = Settings(fps=30.0)
+    second = next(w for w in asr if w.text.lower().startswith("today"))
+    cut = round((second.start - 2 / 30) * 30) / 30           # a cut 2 frames before the second line
+    res = sync_words(parse_script(script, s), asr, end, s, cuts=[cut])
+    res.settings = s
+    assert any(abs(c.start - cut) < 1e-6 for c in res.cues), [(c.start, c.text) for c in res.cues]
+    again = recut(res, 18, 4)
+    assert again.cuts == [cut] and again.cut_stats.get("snapped", 0) >= 1, again.cut_stats
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
