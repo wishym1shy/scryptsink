@@ -683,6 +683,35 @@ def test_recut_keeps_snapping_to_cuts():
     assert again.cuts == [cut] and again.cut_stats.get("snapped", 0) >= 1, again.cut_stats
 
 
+def test_snapping_never_blinks_or_makes_flashes():
+    """Found by fuzzing: an end moved later onto one cut and the next start earlier onto another left a
+    1-frame gap (a blink); moving a start earlier shortened the previous subtitle below the minimum."""
+    from scriptsync_core import _finalize_times
+    s = Settings(fps=25, premiere_zero_fix=False, min_gap=0.1, min_cue_seconds=0.8)
+    cues = [_cue(3.8, 6.72), _cue(7.24, 10.0)]
+    _finalize_times(cues, s, 12.0, [7.12, 7.16])
+    gap = cues[1].start - cues[0].end
+    assert gap < 1e-6 or gap >= s.min_gap - 1e-6, [(c.start, c.end) for c in cues]
+    s = Settings(fps=0, premiere_zero_fix=False, min_cue_seconds=0.8, tail_hold=0.12)
+    cues = [_cue(0.5225, 0.986), _cue(1.486, 2.9)]           # the first shows for exactly 0.8 s
+    _finalize_times(cues, s, 10.0, [1.2859])
+    assert cues[0].end - cues[0].start >= 0.8 - 1e-6, [(c.start, c.end) for c in cues]
+
+
+def test_a_flash_is_not_a_cut():
+    """A camera flash changes the picture and changes it back: two similar spikes a few frames apart."""
+    quiet = [0.03, 0.05, 0.02, 0.04] * 10
+    fr = 1001 / 30000
+    def times(vals):
+        return [(i * fr, v) for i, v in enumerate(vals)]
+    flash = quiet[:20] + [42.0, 0.05, 42.2] + quiet[:17]
+    assert find_cuts(times(flash)) == [], find_cuts(times(flash))
+    cut = quiet[:20] + [24.0, 0.7] + quiet[:18]
+    assert len(find_cuts(times(cut))) == 1
+    two_cuts = quiet[:20] + [24.0] + quiet[:10] + [30.0] + quiet[:9]     # 11 frames apart: both are cuts
+    assert len(find_cuts(times(two_cuts))) == 2
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
