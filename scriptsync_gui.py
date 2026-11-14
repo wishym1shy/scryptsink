@@ -595,6 +595,7 @@ class App(tk.Tk):
         self.v_labels = tk.BooleanVar(value=False)
         self.v_lines = tk.BooleanVar(value=True)
         self.v_zero = tk.BooleanVar(value=True)
+        self.v_cuts = tk.BooleanVar(value=True)
         self.v_prime = tk.BooleanVar(value=True)
         self.v_unheard = tk.BooleanVar(value=False)
         self.v_cache = tk.BooleanVar(value=True)
@@ -1218,7 +1219,8 @@ class App(tk.Tk):
             r += 1
         ttk.Label(body, text="Subtitles", style="Section.TLabel").grid(row=r, column=0, sticky="w", pady=(12, 0))
         r += 1
-        for v, txt in ((self.v_zero, "Premiere fix: never start the first subtitle at 00:00:00,000"),
+        for v, txt in ((self.v_cuts, "Snap subtitle changes to video cuts (when one is a few frames away)"),
+                       (self.v_zero, "Premiere fix: never start the first subtitle at 00:00:00,000"),
                        (self.v_unheard, "Also include lines that were never heard (timing is a guess)"),
                        (self.v_words, "Also save every word's timing (.words.json / .words.srt) for other tools")):
             ttk.Checkbutton(body, text=txt, variable=v).grid(row=r, column=0, columnspan=3, sticky="w", pady=1)
@@ -1295,6 +1297,7 @@ class App(tk.Tk):
             strip_speaker_labels=self.v_labels.get(),
             keep_script_lines=self.v_lines.get(),
             premiere_zero_fix=self.v_zero.get(),
+            snap_to_cuts=self.v_cuts.get(),
             prime_vocab=self.v_prime.get(),
             include_unheard=self.v_unheard.get(),
             use_cache=self.v_cache.get(),
@@ -1304,7 +1307,7 @@ class App(tk.Tk):
     def _save_settings(self):
         data = {"model": self.var_model.get(), "lang": self.var_lang.get(), "maxc": self.var_maxchars.get(),
                 "out": self.var_out.get(), "brackets": self.v_brackets.get(), "labels": self.v_labels.get(),
-                "lines": self.v_lines.get(), "zero": self.v_zero.get(), "prime": self.v_prime.get(),
+                "lines": self.v_lines.get(), "zero": self.v_zero.get(), "cuts": self.v_cuts.get(), "prime": self.v_prime.get(),
                 "unheard": self.v_unheard.get(), "cache": self.v_cache.get(),
                 "mincue": self.v_mincue.get(), "bridge": self.v_bridge.get(), "maxsec": self.v_maxsec.get(),
                 "fps": self.v_fps.get(), "modeldir": self.v_modeldir.get(), "appearance": self.appearance,
@@ -1328,7 +1331,7 @@ class App(tk.Tk):
             self.var_out.set(d.get("out", ""))
             self.var_maxwords.set(int(d.get("maxwords", 0)))
             for k, v in (("brackets", self.v_brackets), ("labels", self.v_labels), ("lines", self.v_lines),
-                         ("zero", self.v_zero), ("prime", self.v_prime), ("unheard", self.v_unheard),
+                         ("zero", self.v_zero), ("cuts", self.v_cuts), ("prime", self.v_prime), ("unheard", self.v_unheard),
                          ("cache", self.v_cache), ("words", self.v_words)):
                 if k in d:
                     v.set(bool(d[k]))

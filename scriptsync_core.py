@@ -23,6 +23,7 @@ without any speech model installed.
 """
 from __future__ import annotations
 
+import bisect
 import difflib
 import hashlib
 import importlib.util
@@ -34,6 +35,7 @@ import os
 import platform
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -246,6 +248,8 @@ class Settings:
     premiere_zero_fix: bool = True  # Premiere quirk: it drops a cue that starts at 00:00:00,000
     include_unheard: bool = False   # keep cues for text that was never heard (timing = guess)
     export_words: bool = False      # also write <output>.words.json and <output>.words.srt (one word per cue)
+    snap_to_cuts: bool = True       # move a subtitle change that is a few frames off a video cut onto the cut
+    cut_snap_frames: int = 8        # ... when it is at most this many frames away
 
 
 @dataclass
@@ -273,6 +277,8 @@ class Cue:
     notes: list
     line_no: int
     words: int = 0
+    speech_start: float = 0.0       # when its first word is said (start/end are when it's on screen)
+    speech_end: float = 0.0         # when its last word ends
 
 
 @dataclass
@@ -312,6 +318,8 @@ class SyncResult:
     fps_source: str = ""                           # where that frame rate came from
     settings: Optional["Settings"] = None          # the settings these cues were built with
     meta: dict = field(default_factory=dict)       # clip/script details for the report and file names
+    cuts: list = field(default_factory=list)       # times (s) of the cuts found in the video
+    cut_stats: dict = field(default_factory=dict)  # {"snapped": n, "near": [cue indexes left near a cut]}
 
 
 class Cancelled(Exception):
@@ -845,7 +853,10 @@ def _level(conf: float) -> str:
     return "ok" if conf >= 0.9 else ("check" if conf >= 0.55 else "bad")
 
 
-def build_cues(words: list, lines: list, s: Settings, audio_duration: float):
+def build_cues(words: list, lines: list, s: Settings, audio_duration: float, cuts: Optional[list] = None,
+               cut_stats: Optional[dict] = None):
+    """-> (cues, skipped, layout). With ``cuts`` (video cut times), subtitle changes near a cut are moved
+    onto it; what happened is put into ``cut_stats`` if given."""
     by_line: dict = {}
     for w in words:
         by_line.setdefault(w.line, []).append(w)
@@ -870,9 +881,11 @@ def build_cues(words: list, lines: list, s: Settings, audio_duration: float):
                             " ".join(w.text for w in chunk), conf, _level(conf), notes, li,
                             len(chunk)))
     cues.sort(key=lambda c: c.start)
-    _finalize_times(cues, s, audio_duration)
+    stats = _finalize_times(cues, s, audio_duration, cuts)
     for i, c in enumerate(cues, 1):
         c.index = i
+    if stats is not None and cut_stats is not None:
+        cut_stats.update(stats, near=[c.index for c in cues if any(n.startswith(_NEAR_CUT) for n in c.notes)])
     return cues, skipped, layout
 
 
@@ -880,15 +893,18 @@ def _snap(t: float, fps: float) -> float:
     return round(t * fps) / fps if fps and fps > 0 else t
 
 
-def _finalize_times(cues: list, s: Settings, duration: float):
+def _finalize_times(cues: list, s: Settings, duration: float, cuts: Optional[list] = None):
     """Decide when each cue appears and disappears.
 
     Consecutive cues either touch (previous end == next start) or are separated by a real,
     visible gap of at least ``min_gap``. Anything in between would show as a blank frame or
-    two, so the subtitles would blink at every cue change.
+    two, so the subtitles would blink at every cue change. With ``cuts``, subtitle changes a few
+    frames off a video cut are then moved onto it (see _snap_to_cuts). Returns its stats, or None.
     """
     n = len(cues)
     frame = 1.0 / s.fps if s.fps and s.fps > 0 else 0.0
+    for c in cues:
+        c.speech_start, c.speech_end = c.start, c.end
     for c in cues:
         c.start = _snap(max(0.0, c.start - s.lead_in), s.fps)
     for i, c in enumerate(cues):
@@ -911,10 +927,97 @@ def _finalize_times(cues: list, s: Settings, duration: float):
             if nxt is not None and end > nxt:             # crowded cues: never overlap the next one
                 end = max(nxt, c.start)
         c.end = end
+    stats = _snap_to_cuts(cues, cuts, s, duration) if (cuts and s.snap_to_cuts) else None
     if s.premiere_zero_fix and cues and cues[0].start < 0.067:
         cues[0].start = 0.067
         if cues[0].end < cues[0].start + 0.05:
             cues[0].end = cues[0].start + 0.05
+    return stats
+
+
+_NEAR_CUT = "changes "          # start of the note on a subtitle change left near a cut
+
+
+def _snap_to_cuts(cues: list, cuts: list, s: Settings, duration: float) -> dict:
+    """Move subtitle changes that are a few frames off a video cut onto the cut (#30).
+
+    A subtitle that changes 1-2 frames before or after a cut looks like a glitch. Cuts never add
+    subtitle changes; this only moves the ones that exist, within ``cut_snap_frames``:
+    - a change between two touching subtitles moves onto the cut if the first one's words have
+      ended by then and the next one's words haven't started yet (a little slack for timing);
+    - a subtitle's first appearance / last frame on screen moves the same way, never into a
+      neighbour and never so that a line comes up after its speech started or goes before it ended.
+    Changes left near a cut (the speech runs across it) get a note so an editor can look.
+    """
+    fps = s.fps if s.fps and s.fps > 0 else 30.0
+    frame = 1.0 / fps
+    window = max(int(s.cut_snap_frames), 0) * frame + 1e-6
+    slack = 3 * frame                       # word timings are good to a frame or two, not exactly
+    cuts = sorted(_snap(c, s.fps) for c in cuts)
+    stats = {"snapped": 0}
+
+    def nearest(t):
+        i = bisect.bisect_left(cuts, t)
+        best = min((cuts[j] for j in (i - 1, i) if 0 <= j < len(cuts)), key=lambda c: abs(c - t), default=None)
+        if best is None or abs(best - t) > window or abs(best - t) < frame / 2:
+            return None
+        return best
+
+    def long_enough(c, start, end):         # don't turn a readable subtitle into a flash
+        return end - start >= min(c.end - c.start, s.min_cue_seconds) - 1e-6
+
+    def note(c, b, cut, why):
+        k = round(abs(b - cut) * fps)
+        c.notes.append(f"{_NEAR_CUT}{k} frame{'s' if k != 1 else ''} {'after' if b > cut else 'before'} "
+                       f"a video cut at {short_tc(cut)}; not moved because {why}")
+
+    n = len(cues)
+    for i in range(n + 1):
+        L = cues[i - 1] if i > 0 else None
+        R = cues[i] if i < n else None
+        if L is not None and R is not None and abs(L.end - R.start) < 1e-6:
+            b = R.start
+            cut = nearest(b)
+            if cut is None:
+                continue
+            if L.speech_end > cut + slack:
+                note(R, b, cut, "the previous line is still being said at the cut")
+            elif R.speech_start < cut - slack:
+                note(R, b, cut, "this line is already being said before the cut")
+            elif not (long_enough(L, L.start, cut) and long_enough(R, cut, R.end)):
+                note(R, b, cut, "a subtitle would become too short")
+            else:
+                L.end = R.start = cut
+                stats["snapped"] += 1
+            continue
+        if L is not None:                   # the last frame of a subtitle followed by a gap
+            b = L.end
+            cut = nearest(b)
+            limit = R.start if R is not None else (duration or float("inf"))
+            if cut is not None and cut <= limit + 1e-6:
+                if L.speech_end > cut + slack:
+                    note(L, b, cut, "the line is still being said at the cut")
+                elif not long_enough(L, L.start, cut):
+                    note(L, b, cut, "the subtitle would become too short")
+                else:
+                    L.end = cut
+                    stats["snapped"] += 1
+        if R is not None:                   # a subtitle appearing after a gap
+            b = R.start
+            cut = nearest(b)
+            if cut is not None:
+                if R.speech_start < cut - slack:
+                    note(R, b, cut, "the line is already being said before the cut")
+                elif L is not None and cut < L.end - 1e-6 and L.speech_end > cut + slack:
+                    note(R, b, cut, "the previous line is still being said at the cut")
+                elif not long_enough(R, cut, R.end):
+                    note(R, b, cut, "the subtitle would become too short")
+                else:
+                    if L is not None and cut < L.end:
+                        L.end = cut
+                    R.start = cut
+                    stats["snapped"] += 1
+    return stats
 
 
 # --------------------------------------------------------------------------
@@ -1047,6 +1150,12 @@ def make_report(job_label: str, script_label: str, res: SyncResult, s: Settings,
         L.append(f"Frames:  {fps_name(res.fps)}  ({res.fps_source})")
     L.append(f"Heard:   {res.match_pct:.0f}% of the script's words were found in the audio")
     L.append(f"Cues:    {len(res.cues)} total  =  {res.n_ok} OK, {res.n_check} CHECK, {res.n_bad} BAD")
+    if res.cut_stats:
+        near = res.cut_stats.get("near", [])
+        L.append(f"Cuts:    {len(res.cuts)} found in the video; {res.cut_stats.get('snapped', 0)} subtitle "
+                 f"change(s) moved onto a cut" + (f"; {len(near)} left near one (see below)" if near else ""))
+    elif res.meta.get("cuts_checked"):
+        L.append("Cuts:    none found in the video")
     L.append("")
     for w in res.warnings:
         L.append(f"!! {w}")
@@ -1063,6 +1172,16 @@ def make_report(job_label: str, script_label: str, res: SyncResult, s: Settings,
         for n in c.notes:
             L.append(f"    - {n}")
     L.append("")
+    near = [c for c in res.cues if any(n.startswith(_NEAR_CUT) for n in c.notes)]
+    if near:
+        L.append("SUBTITLE CHANGES NEAR A VIDEO CUT (not moved onto it; check they look right)")
+        L.append("-" * 60)
+        for c in near:
+            L.append(f"#{c.index}  {short_tc(c.start)}  \"{c.text}\"")
+            for n in c.notes:
+                if n.startswith(_NEAR_CUT):
+                    L.append(f"    - {n}")
+        L.append("")
     L.append("NOT IN THE SRT (script text that was never heard)")
     L.append("-" * 60)
     if not res.skipped:
@@ -1281,6 +1400,97 @@ def detect_fps(path: str) -> Optional[float]:
     return probe_clip(path)["fps"]
 
 
+# --------------------------------------------------------------------------
+# Video cuts (#30)
+# --------------------------------------------------------------------------
+# A cut is one frame whose picture differs from the previous one much more than the frames around it do.
+# Comparing with the neighbours (not with a fixed number) is what finds jump cuts in static talking-head
+# shots, where only the speaker moves a little. ffmpeg's scdet score is 0-100.
+CUT_MIN_SCORE = 0.3     # a frame must change at least this much to be a cut at all
+CUT_SPIKE = 6.0         # ... and this many times more than the frames around it
+CUT_HARD = 12.0         # a change this big is a cut whatever its neighbours (a different shot)
+_CUTS_VERSION = 1       # bump when the scores below change, so cached ones are measured again
+_SCORE_RE = re.compile(r"pts_time:([-\d.]+)\s*\n\s*lavfi\.scd\.score=([\d.]+)")
+
+
+def frame_change_scores(path: str, cancel=None) -> list:
+    """-> [(time, score)] for every video frame: how much it differs from the frame before. Read with
+    the app's ffmpeg from a small copy of the picture, so it is fast. Empty for audio-only files."""
+    ff = find_ffmpeg()
+    if not ff or not probe_clip(path).get("width"):
+        return []
+    kw = {"creationflags": 0x08000000} if os.name == "nt" else {}   # no console flash on Windows
+    cmd = [ff, "-hide_banner", "-nostdin", "-v", "error", "-i", path, "-map", "0:v:0", "-an", "-sn", "-dn",
+           "-vf", "scale=240:-2,scdet=threshold=0:sc_pass=0,metadata=print:key=lavfi.scd.score:file=-",
+           "-f", "null", "-"]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **kw)
+    out = []
+    try:
+        while True:
+            chunk = p.stdout.read(1 << 16)
+            if not chunk:
+                break
+            out.append(chunk)
+            if cancel is not None and cancel.is_set():
+                p.kill()
+                raise Cancelled()
+    finally:
+        p.stdout.close()
+        p.wait()
+    text = b"".join(out).decode("utf-8", "replace")
+    return [(float(t), float(v)) for t, v in _SCORE_RE.findall(text)]
+
+
+def find_cuts(scores: list) -> list:
+    """Cut times (s) from frame_change_scores(): the first frame of each new shot."""
+    vals = [v for _, v in scores]
+    cuts = []
+    for i in range(2, len(vals)):           # the first frames of a clip have nothing to cut from
+        v = vals[i]
+        if v < CUT_MIN_SCORE or v < max(vals[max(0, i - 2):i + 3]):
+            continue                        # too small, or not the peak of this moment
+        around = vals[max(1, i - 7):i] + vals[i + 1:i + 8]
+        base = (statistics.median(around) if around else 0.0) + 0.02
+        if v >= CUT_HARD or v / base >= CUT_SPIKE:
+            # The change can spread over two frames (the encoder finishes drawing the new picture on the
+            # next one), and that frame may score highest. The cut is where the change starts.
+            j = i
+            while j > max(i - 2, 2) and vals[j - 1] >= 0.5 * v:
+                j -= 1
+            if not cuts or scores[j][0] > cuts[-1]:
+                cuts.append(scores[j][0])
+    return cuts
+
+
+def detect_cuts(path: str, use_cache: bool = True, cancel=None) -> list:
+    """Cut times (s) in a clip's video, [] for audio-only files. The per-frame scores are cached, so
+    finding the cuts again (or with tuned settings) needs no decoding."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return []
+    key = hashlib.sha1(f"cuts{_CUTS_VERSION}|{os.path.abspath(path)}|{st.st_size}|{int(st.st_mtime)}"
+                       .encode()).hexdigest()
+    cpath = os.path.join(cache_dir(), key + ".cuts.json")
+    scores = None
+    if use_cache and os.path.exists(cpath):
+        try:
+            scores = [tuple(x) for x in json.load(open(cpath, encoding="utf-8"))]
+        except Exception:
+            log.warning("cuts: saved scores unreadable, measuring again", exc_info=True)
+    if scores is None:
+        t = time.monotonic()
+        scores = frame_change_scores(path, cancel)
+        log.info("cuts: measured %d frames in %.1f s", len(scores), time.monotonic() - t)
+        try:
+            json.dump([[round(a, 4), round(b, 3)] for a, b in scores], open(cpath, "w", encoding="utf-8"))
+        except OSError:
+            log.warning("cuts: couldn't save the scores for next time", exc_info=True)
+    cuts = find_cuts(scores)
+    log.info("cuts: %d found", len(cuts))
+    return cuts
+
+
 def fps_name(fps: float) -> str:
     """29.97002997 -> "29.97 fps", 0 -> "not snapped"."""
     if not fps or fps <= 0:
@@ -1398,14 +1608,15 @@ def transcribe(path: str, s: Settings, lines: list, progress, cancel):
 # --------------------------------------------------------------------------
 # Public entry points
 # --------------------------------------------------------------------------
-def sync_words(lines: list, asr: list, duration: float, s: Settings) -> SyncResult:
+def sync_words(lines: list, asr: list, duration: float, s: Settings, cuts: Optional[list] = None) -> SyncResult:
     """Pure alignment + cue building (no audio, no files)."""
     if not asr:
         raise SyncError("No speech was detected in this clip.")
     words, off = align_script(lines, asr, duration)
     if not duration:
         duration = max(w.end for w in asr)
-    cues, skipped, layout = build_cues(words, lines, s, duration)
+    cut_stats: dict = {}
+    cues, skipped, layout = build_cues(words, lines, s, duration, cuts, cut_stats)
     heard = sum(1 for w in words if w.anchored and w.conf >= 0.85) / max(len(words), 1)
     pct = 100.0 * sum(w.conf for w in words) / max(len(words), 1)
     warnings = []
@@ -1415,7 +1626,8 @@ def sync_words(lines: list, asr: list, duration: float, s: Settings) -> SyncResu
     res = SyncResult(
         cues=cues, skipped=skipped, off_script=off, warnings=warnings, match_pct=pct,
         n_ok=sum(c.level == "ok" for c in cues), n_check=sum(c.level == "check" for c in cues),
-        n_bad=sum(c.level == "bad" for c in cues), duration=duration, words=words, layout=layout)
+        n_bad=sum(c.level == "bad" for c in cues), duration=duration, words=words, layout=layout,
+        cuts=list(cuts or []), cut_stats=cut_stats)
     res.srt_text = make_srt(cues)
     return res
 
@@ -1474,14 +1686,36 @@ def _run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> S
         script_label += f" + your line breaks ({len(lines)} lines)"
         # each of the user's lines becomes exactly one cue
         s_cues = replace(s, keep_script_lines=True, max_chars=10 ** 6, max_cue_seconds=10 ** 6, max_words=0)
+    cut_box: dict = {}
+    cut_thread = None
+    if s.snap_to_cuts:                      # look for video cuts while the speech model listens
+        def find():
+            try:
+                cut_box["cuts"] = detect_cuts(job.video, s.use_cache, cancel)
+            except Cancelled:
+                pass
+            except Exception as e:          # never fail a sync over this: just don't snap
+                log.warning("cuts: couldn't look for cuts", exc_info=True)
+                cut_box["error"] = str(e)
+        cut_thread = threading.Thread(target=find, name="find-cuts", daemon=True)
+        cut_thread.start()
     t = time.monotonic()
     asr, dur, lang = transcribe(job.video, s, hint_lines, progress, cancel)
     log.info("step: listening took %.1f s", time.monotonic() - t)
     if cancel and cancel.is_set():
         raise Cancelled()
+    if cut_thread is not None:
+        if cut_thread.is_alive():
+            progress(0.87, "Finding the cuts in the video")
+        while cut_thread.is_alive():
+            cut_thread.join(0.2)
+            if cancel and cancel.is_set():
+                raise Cancelled()
     progress(0.88, "Matching the script to the audio")
     t = time.monotonic()
-    res = sync_words(lines, asr, dur, s_cues)
+    res = sync_words(lines, asr, dur, s_cues, cut_box.get("cuts"))
+    if "error" in cut_box:
+        res.warnings.append("Couldn't look for cuts in the video, so subtitle changes weren't moved onto them.")
     log.info("step: matching %d script lines took %.2f s", len(lines), time.monotonic() - t)
     if s_cues is not s:
         long_lines = sum(1 for ln in lines if len(ln) > s.max_chars)
@@ -1493,7 +1727,8 @@ def _run_job(job: Job, s: Settings, progress: Callable = None, cancel=None) -> S
     res.meta = {"video": job.video, "label": job.label(), "script_label": script_label, "n_lines": len(lines),
                 "n_words": sum(len(l.split()) for l in lines), "lang": lang or s.language,
                 "out_dir": job.out_dir or os.path.dirname(os.path.abspath(job.video)),
-                "own_line_breaks": s_cues is not s}
+                "own_line_breaks": s_cues is not s, "cuts_checked": bool(cut_box.get("cuts") is not None
+                                                                          and probe_clip(job.video).get("width"))}
     progress(0.96, "Writing files")
     write_result(res)
     progress(1.0, "Done")
@@ -1504,8 +1739,10 @@ def recut(res: SyncResult, max_chars: int, max_words: int) -> SyncResult:
     """The same clip re-cut with other limits, from the word timings already found: no listening and no
     matching, so it takes milliseconds. Nothing is written; see write_result()."""
     s = replace(res.settings, max_chars=max(int(max_chars), 10), max_words=max(int(max_words), 0))
-    cues, skipped, layout = build_cues(res.words, None, s, res.duration)
+    cut_stats: dict = {}
+    cues, skipped, layout = build_cues(res.words, None, s, res.duration, res.cuts, cut_stats)
     new = replace(res, cues=cues, skipped=skipped, layout=layout, settings=s, srt_path="", report_path="",
+                  cut_stats=cut_stats,
                   words_json_path="", words_srt_path="",
                   n_ok=sum(c.level == "ok" for c in cues), n_check=sum(c.level == "check" for c in cues),
                   n_bad=sum(c.level == "bad" for c in cues))
