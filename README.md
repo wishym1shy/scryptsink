@@ -236,6 +236,23 @@ clipboard for a bug report. Folder paths are replaced by placeholders such as `<
 log never contains your script or subtitle text; clip file names are included, so read it before posting it publicly.
 On the command line, add `-v` to also print the log to the terminal.
 
+### Windows 11: "Smart App Control" blocks the speech engine
+
+On a new (or freshly reset) Windows 11 PC, **Smart App Control** is often turned on. It blocks part of the
+speech engine (`ctranslate2.dll`) because that file is not digitally signed. You may see a **"python.exe - Bad
+Image ... Error status 0xc0e90002"** box, or setup ends with "Windows refused to load part of the speech engine".
+The launcher checks for this before setup and tells you.
+
+To use ScryptSync, turn it off: **Windows Security > App & browser control > Smart App Control settings > Off**,
+then double-click `run_windows.bat` again. Before you do:
+
+- Once it is off, Windows can only turn it back on by **reinstalling Windows**. Microsoft Defender antivirus keeps
+  protecting the PC either way.
+- On a work computer, ask your IT team first; it may be managed for you.
+
+ScryptSync can't sign that file itself; it belongs to the speech engine project
+([CTranslate2](https://github.com/OpenNMT/CTranslate2)).
+
 ## Limitations
 
 - Numbers said differently from how they're written ("2025" vs "twenty twenty five") show up as CHECK.
