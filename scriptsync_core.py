@@ -1010,13 +1010,19 @@ def _snap_to_cuts(cues: list, cuts: list, s: Settings, duration: float) -> dict:
                     note(R, b, cut, "the line is already being said before the cut")
                 elif L is not None and cut < L.end - 1e-6 and L.speech_end > cut + slack:
                     note(R, b, cut, "the previous line is still being said at the cut")
-                elif not long_enough(R, cut, R.end):
-                    note(R, b, cut, "the subtitle would become too short")
+                elif not long_enough(R, cut, R.end) or (
+                        L is not None and cut < L.end - 1e-6 and not long_enough(L, L.start, cut)):
+                    note(R, b, cut, "a subtitle would become too short")
                 else:
                     if L is not None and cut < L.end:
                         L.end = cut
                     R.start = cut
                     stats["snapped"] += 1
+    # Moving ends and starts onto different cuts can leave a sliver of a gap, which shows as a blink:
+    # close it the same way _finalize_times does (hold the earlier subtitle until the next one).
+    for a, b in zip(cues, cues[1:]):
+        if 1e-6 < b.start - a.end < s.min_gap:
+            a.end = b.start
     return stats
 
 
@@ -1409,7 +1415,8 @@ def detect_fps(path: str) -> Optional[float]:
 CUT_MIN_SCORE = 0.3     # a frame must change at least this much to be a cut at all
 CUT_SPIKE = 6.0         # ... and this many times more than the frames around it
 CUT_HARD = 12.0         # a change this big is a cut whatever its neighbours (a different shot)
-_CUTS_VERSION = 1       # bump when the scores below change, so cached ones are measured again
+CUT_FLASH_FRAMES = 4    # two similar changes this close together are a flash, not two cuts
+_CUTS_VERSION = 1       # bump when frame_change_scores() changes, so cached ones are measured again
 _SCORE_RE = re.compile(r"pts_time:([-\d.]+)\s*\n\s*lavfi\.scd\.score=([\d.]+)")
 
 
@@ -1417,7 +1424,10 @@ def frame_change_scores(path: str, cancel=None) -> list:
     """-> [(time, score)] for every video frame: how much it differs from the frame before. Read with
     the app's ffmpeg from a small copy of the picture, so it is fast. Empty for audio-only files."""
     ff = find_ffmpeg()
-    if not ff or not probe_clip(path).get("width"):
+    info = probe_clip(path)
+    if not ff or not info.get("width"):
+        if ff and not info.get("duration"):  # ffmpeg couldn't even read the file's header
+            raise RuntimeError("ffmpeg couldn't read the clip")
         return []
     kw = {"creationflags": 0x08000000} if os.name == "nt" else {}   # no console flash on Windows
     cmd = [ff, "-hide_banner", "-nostdin", "-v", "error", "-i", path, "-map", "0:v:0", "-an", "-sn", "-dn",
@@ -1438,16 +1448,19 @@ def frame_change_scores(path: str, cancel=None) -> list:
         p.stdout.close()
         p.wait()
     text = b"".join(out).decode("utf-8", "replace")
-    return [(float(t), float(v)) for t, v in _SCORE_RE.findall(text)]
+    scores = [(float(t), float(v)) for t, v in _SCORE_RE.findall(text)]
+    if p.returncode != 0 and not scores:    # unreadable, not "no cuts": don't let it pass (or be cached) as one
+        raise RuntimeError(f"ffmpeg couldn't read the video (exit code {p.returncode})")
+    return scores
 
 
 def find_cuts(scores: list) -> list:
     """Cut times (s) from frame_change_scores(): the first frame of each new shot."""
     vals = [v for _, v in scores]
-    cuts = []
+    peaks = []                              # (frame index where the change starts, its score)
     for i in range(2, len(vals)):           # the first frames of a clip have nothing to cut from
         v = vals[i]
-        if v < CUT_MIN_SCORE or v < max(vals[max(0, i - 2):i + 3]):
+        if v < CUT_MIN_SCORE or v < max(vals[i - 1:i + 2]):
             continue                        # too small, or not the peak of this moment
         around = vals[max(1, i - 7):i] + vals[i + 1:i + 8]
         base = (statistics.median(around) if around else 0.0) + 0.02
@@ -1457,9 +1470,15 @@ def find_cuts(scores: list) -> list:
             j = i
             while j > max(i - 2, 2) and vals[j - 1] >= 0.5 * v:
                 j -= 1
-            if not cuts or scores[j][0] > cuts[-1]:
-                cuts.append(scores[j][0])
-    return cuts
+            if not peaks or j > peaks[-1][0]:
+                peaks.append((j, v))
+    # A flash (a camera flash, a light flicker) changes the picture and changes it back a few frames later:
+    # two similar spikes close together. A cut changes it once.
+    flash = set()
+    for (a, va), (b, vb) in zip(peaks, peaks[1:]):
+        if b - a <= CUT_FLASH_FRAMES and min(va, vb) >= max(va, vb) / 3:
+            flash.update((a, b))
+    return [scores[j][0] for j, _ in peaks if j not in flash]
 
 
 def detect_cuts(path: str, use_cache: bool = True, cancel=None) -> list:
@@ -1899,6 +1918,8 @@ def main(argv=None):
     ap.add_argument("--print-prompt", action="store_true",
                     help="print a prompt for re-cutting this script in an AI tool of your choice, then exit")
     ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--no-cut-snap", action="store_true",
+                    help="don't move subtitle changes onto nearby video cuts")
     ap.add_argument("-v", "--verbose", action="store_true", help="also print the log to the terminal")
     a = ap.parse_args(argv)
     setup_logging(console=a.verbose)
@@ -1911,6 +1932,7 @@ def main(argv=None):
         except ValueError:
             ap.error("--fps must be 'auto' or a number")
     s = Settings(model=a.model, language=a.language, max_chars=a.max_chars, use_cache=not a.no_cache,
+                 snap_to_cuts=not a.no_cut_snap,
                  model_dir=a.model_dir, max_words=a.max_words, export_words=a.words)
     if a.print_prompt:
         try:
