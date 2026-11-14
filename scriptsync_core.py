@@ -1339,8 +1339,11 @@ def decode_audio(path: str):
         _forget_setup()
         raise SyncError("numpy isn't installed. Re-run the launcher to finish setup.")
     kw = {"creationflags": 0x08000000} if os.name == "nt" else {}   # no console flash on Windows
-    p = subprocess.run([ff, "-v", "error", "-nostdin", "-i", path, "-vn", "-ac", "1", "-ar", "16000",
-                        "-f", "f32le", "-"], capture_output=True, **kw)
+    # aresample first_pts=0: if the audio track starts after the clip does (common in camera, phone and screen
+    # recordings), pad the start with silence, so sample 0 is the clip's time 0 like the video's frames.
+    # Without it every subtitle came in early by that offset.
+    p = subprocess.run([ff, "-v", "error", "-nostdin", "-i", path, "-vn", "-af", "aresample=async=1:first_pts=0",
+                        "-ac", "1", "-ar", "16000", "-f", "f32le", "-"], capture_output=True, **kw)
     if p.returncode != 0 or not p.stdout:
         why = (p.stderr.decode("utf-8", "replace").strip().splitlines() or ["no audio stream?"])[-1]
         raise SyncError(f"Couldn't read the audio from '{os.path.basename(path)}': {why}")
@@ -1348,8 +1351,25 @@ def decode_audio(path: str):
 
 
 _FPS_RE = re.compile(r"Stream #[^\n]*?Video:(?![^\n]*attached pic)[^\n]*?(\d+(?:\.\d+)?)(k?) fps")
+_TBR_RE = re.compile(r"Stream #[^\n]*?Video:(?![^\n]*attached pic)[^\n]*?(\d+(?:\.\d+)?)(k?) tbr")
 _STANDARD_FPS = (24000 / 1001, 24.0, 25.0, 30000 / 1001, 30.0, 48.0, 50.0, 60000 / 1001, 60.0)
 _fps_cache: dict = {}
+
+
+def _video_fps(ffmpeg_info: str) -> Optional[float]:
+    """The frame rate from ffmpeg's description of a clip. ffmpeg gives the average ("28.72 fps") and its
+    guess at the base rate the clip was recorded at ("29.97 tbr"). They are the same for normal clips. For
+    variable-frame-rate footage (phones in low light drop frames) the average is an odd number that no
+    editing timeline uses, so the base rate is taken when it is a standard rate and the average isn't."""
+    def rate(rx):
+        m = rx.search(ffmpeg_info)
+        f = float(m.group(1)) * (1000 if m.group(2) else 1) if m else 0.0
+        return _normalize_fps(f) if 1 <= f <= 1000 else None
+    avg, base = rate(_FPS_RE), rate(_TBR_RE)
+    if avg is not None and base is not None and avg not in _STANDARD_FPS and base in _STANDARD_FPS:
+        log.info("frame rate: variable (average %.3f), using the base rate %.3f", avg, base)
+        return base
+    return avg
 
 
 def _normalize_fps(f: float) -> float:
@@ -1383,11 +1403,7 @@ def probe_clip(path: str) -> dict:
             p = subprocess.run([ff, "-hide_banner", "-nostdin", "-i", path], capture_output=True,
                                timeout=30, **kw)
             err = p.stderr.decode("utf-8", "replace")
-            m = _FPS_RE.search(err)
-            if m:
-                f = float(m.group(1)) * (1000 if m.group(2) else 1)
-                if 1 <= f <= 1000:
-                    info["fps"] = _normalize_fps(f)
+            info["fps"] = _video_fps(err)
             m = _DUR_RE.search(err)
             if m:
                 info["duration"] = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
@@ -1592,6 +1608,10 @@ def _load_plugin():
     return mod
 
 
+_TRANSCRIPT_VERSION = 2   # bump when decoding/timing changes, so saved transcripts made before are not reused
+                          # (2: audio that starts late is no longer shifted to time 0)
+
+
 def transcribe(path: str, s: Settings, lines: list, progress, cancel):
     """-> (list[AsrWord], duration, language). Uses the cache when allowed."""
     hint = vocab_hint(lines) if s.prime_vocab else ""
@@ -1599,7 +1619,7 @@ def transcribe(path: str, s: Settings, lines: list, progress, cancel):
     st = os.stat(path)
     key = hashlib.sha1(
         f"{os.path.abspath(path)}|{st.st_size}|{int(st.st_mtime)}|{s.model}|{s.language}|{hint}|"
-        f"{'plugin' if plugin else 'fw'}".encode()).hexdigest()
+        f"{'plugin' if plugin else 'fw'}|{_TRANSCRIPT_VERSION}".encode()).hexdigest()
     cpath = os.path.join(cache_dir(), key + ".json")
     if s.use_cache and os.path.exists(cpath):
         try:
