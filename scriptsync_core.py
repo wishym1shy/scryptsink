@@ -48,7 +48,7 @@ from typing import Callable, Optional
 APP_NAME = "ScryptSync"
 APP_AUTHOR = "wishym1shy"
 APP_URL = "https://github.com/wishym1shy/scryptsync"
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.2.0"
 # Python versions the app can be installed on: the speech engine's dependencies have ready-made
 # packages for these. Python 3.15 is left out until onnxruntime ships for it (CI's "installable"
 # check says when). run_windows.bat and run_mac.command list the same range; tests/test_core.py checks.
