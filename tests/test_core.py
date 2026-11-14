@@ -712,6 +712,40 @@ def test_a_flash_is_not_a_cut():
     assert len(find_cuts(times(two_cuts))) == 2
 
 
+def test_audio_that_starts_late_keeps_clip_time():
+    """Camera/phone files often start the audio track after the video: decoded sample 0 must still be the
+    clip's time 0, or every subtitle comes in early by that offset."""
+    import subprocess, tempfile
+    if not find_ffmpeg():
+        print("    (skipped: no ffmpeg)"); return
+    try:
+        import numpy as np
+    except ImportError:
+        print("    (skipped: no numpy)"); return
+    ff, d = find_ffmpeg(), tempfile.mkdtemp()
+    beep = os.path.join(d, "beep.m4a")              # silence, a beep at 1.0 s, silence
+    subprocess.run([ff, "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=1", "-f", "lavfi",
+                    "-i", "sine=f=1000:r=48000:d=0.3", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=1.2",
+                    "-filter_complex", "[0][1][2]concat=n=3:v=0:a=1", "-c:a", "aac", beep], check=True)
+    clip = os.path.join(d, "late.mp4")              # the audio track starts 0.5 s into the clip
+    subprocess.run([ff, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=3", "-itsoffset", "0.5",
+                    "-i", beep, "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy",
+                    clip], check=True)
+    a = decode_audio(clip)
+    at = int(np.argmax(np.abs(a) > 0.1)) / 16000
+    assert abs(at - 1.5) < 0.03, f"beep decoded at {at:.3f} s, it is at 1.500 s in the clip"
+
+
+def test_variable_frame_rate_uses_the_base_rate():
+    from scriptsync_core import _video_fps
+    line = "  Stream #0:0[0x1](und): Video: hevc (Main 10), yuv420p10le, 1080x1920, 1310 kb/s, {} fps, {} tbr, 30k tbn"
+    assert abs(_video_fps(line.format("28.72", "29.97")) - 30000 / 1001) < 1e-9     # VFR phone clip
+    assert abs(_video_fps(line.format("29.97", "29.97")) - 30000 / 1001) < 1e-9     # normal
+    assert _video_fps(line.format("25", "50")) == 25.0                                 # avg standard: keep it
+    assert _video_fps(line.format("12.5", "12.5")) == 12.5                             # unusual but steady
+    assert _video_fps("  Stream #0:0: Audio: aac, 48000 Hz") is None
+
+
 if __name__ == "__main__":
     for n, f in list(globals().items()):
         if n.startswith("test_"):
